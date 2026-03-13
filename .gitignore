@@ -15,9 +15,9 @@ build/
 venv/
 env/
 
-# Data & reports (large, regenerated)
-data/
-reports/
+# Data & reports (large, regenerated) — anchored to project root
+/data/
+/reports/
 
 # Editors
 .vscode/
