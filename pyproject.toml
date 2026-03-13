@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crypto-swing-copilot"
+version = "0.1.0"
+description = "Manual crypto swing-trading research copilot"
+authors = [{name = "Josanchdev", email = "jsanagui@gmail.com"}]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    "ccxt>=4.3.0",                    # Binance data (read-only)
+    "pandas>=2.1.0",                  # Dataframes
+    "pandas-ta>=0.3.14b0",            # Technical indicators (b0 = valid PEP 440)
+    "pydantic>=2.5.0",                # Typed models / JSON schemas
+    "langfuse>=2.0.0",                # LLM observability & tracing
+    "google-genai>=1.0.0",            # Gemini API (unified SDK, supports gemini-3.x)
+    "feedparser>=6.0.10",             # RSS parsing
+    "pyarrow>=15.0.0",                # Parquet I/O
+    "jinja2>=3.1.0",                  # HTML report templating
+    "typer>=0.12.0",                  # CLI
+    "rich>=13.7.0",                   # Pretty console output
+    "python-dotenv>=1.0.0",           # .env loading
+    "pyyaml>=6.0.1",  # YAML config loading
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+    "black>=24.0.0",
+]
+
+[project.scripts]
+run-daily = "crypto_swing_copilot.orchestration.run_daily:run_daily"
+
+# Tell hatchling that the Python package lives under src/
+[tool.hatch.build.targets.wheel]
+packages = ["src/crypto_swing_copilot"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]   # pycodestyle, pyflakes, isort, pyupgrade, bugbear
+ignore = ["E501"]                       # line-length handled by formatter
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true

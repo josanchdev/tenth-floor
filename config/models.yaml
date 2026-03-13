@@ -6,24 +6,24 @@
 
 quant_agent:
   provider: google          # google | ollama | openai
-  model: gemini-1.5-pro
+  model: gemini-3.1-pro
   temperature: 0.1          # Low temp → deterministic regime classification
   max_output_tokens: 1024
 
 sentiment_agent:
   provider: google
-  model: gemini-1.5-pro
+  model: gemini-3.1-pro
   temperature: 0.3          # Slightly higher → richer narrative
   max_output_tokens: 512
 
 strategy_agent:
   provider: google
-  model: gemini-1.5-pro
+  model: gemini-3.1-pro
   temperature: 0.1          # Low temp → consistent structured JSON output
   max_output_tokens: 2048
 
 risk_agent:
   provider: google
-  model: gemini-1.5-pro
+  model: gemini-3.1-pro
   temperature: 0.0          # Zero temp → strict rule application
   max_output_tokens: 512
