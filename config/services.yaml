@@ -1,0 +1,33 @@
+# External service configuration for crypto-swing-copilot v1.
+# Secrets (API keys) are loaded from environment variables – never hard-coded here.
+
+market_data:
+  provider: ccxt/binance
+  mode: spot                          # spot only; futures forbidden in v1
+  access: read_only                   # CCXT is initialised without API keys (public endpoints)
+  ohlcv_limit: 500                    # bars per fetch (max supported by Binance)
+  cache_dir: data/raw                 # local Parquet cache relative to project root
+  rate_limit_ms: 200                  # ms between paginated requests
+
+sentiment:
+  fear_greed:
+    url: https://api.alternative.me/fng/
+    limit: 7                          # fetch last 7 days for trend context
+  rss_feeds:
+    - name: coindesk
+      url: https://www.coindesk.com/arc/outboundfeeds/rss/
+      max_items: 10                   # cap items per run to avoid token bloat
+    # Add a second feed here if needed; keep total feeds ≤ 2.
+
+observability:
+  langfuse:
+    host: https://cloud.langfuse.com  # override with self-hosted URL if needed
+    # Set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY in your .env file.
+    flush_at: 15                      # batch size before flushing traces
+    flush_interval: 30                # seconds between auto-flushes
+
+reporting:
+  output_dir: reports                 # YYYY-MM-DD/ subdir created per run
+  formats:
+    - markdown                        # always produced
+    - html                            # optional; requires jinja2

@@ -1,0 +1,23 @@
+{
+  "exchange": "binance",
+  "market_type": "spot",
+  "quote_currency": "USDT",
+  "pairs": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "ADAUSDT",
+    "AVAXUSDT",
+    "DOTUSDT",
+    "LINKUSDT",
+    "MATICUSDT",
+    "UNIUSDT",
+    "ATOMUSDT",
+    "LTCUSDT",
+    "NEARUSDT",
+    "APTUSDT"
+  ],
+  "_comment": "15 major spot pairs on Binance. All read-only. No futures, no margin."
+}

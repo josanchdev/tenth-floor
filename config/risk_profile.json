@@ -1,0 +1,16 @@
+{
+  "max_open_positions": 3,
+  "max_risk_per_trade": 0.02,
+  "_comment_risk": "2% of total portfolio per trade. Position size computed by Python, not LLM.",
+  "timeframes": ["4h", "1d"],
+  "no_leverage": true,
+  "no_futures": true,
+  "no_margin": true,
+  "spot_only": true,
+  "min_setup_confidence": 0.65,
+  "_comment_confidence": "QuantAgent confidence must exceed this threshold for a setup to reach StrategyAgent.",
+  "stop_loss_atr_multiplier": 1.5,
+  "_comment_sl": "Default SL = entry ± (ATR_14 × 1.5). StrategyAgent may narrow but not widen.",
+  "take_profit_rr_ratio": 2.0,
+  "_comment_tp": "Minimum reward-to-risk ratio of 2:1 for a setup to be included in playbook."
+}
