@@ -1,0 +1,4 @@
+{
+  "only_long": true,
+  "_comment": "User trades Binance SPOT only. No shorting, no futures, no margin. All agent prompts MUST enforce LONG-only proposals."
+}

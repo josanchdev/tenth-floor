@@ -97,10 +97,15 @@ response. Every call is traced via Langfuse with inputs, outputs, latency, and t
 |---|---|---|
 | `QuantAgent` | `PairSnapshot` | `QuantSignal` – trend regime, signal list, confidence |
 | `SentimentAgent` | F&G score + headlines | `SentimentSignal` – risk narrative, bias label |
-| `StrategyAgent` | `QuantSignal` + `SentimentSignal` | `SetupProposal` – entry zone, SL, TP, rationale |
-| `RiskAgent` | `SetupProposal[]` + portfolio state | `PlaybookEntry[]` – filtered, position-sized |
+| `StrategyAgent` | `QuantSignal` + `SentimentSignal` | `SetupProposal` – **LONG-only** entry zone, SL, TP, rationale |
+| `RiskAgent` | `SetupProposal[]` + portfolio state | `PlaybookEntry[]` – filtered, position-sized, **rejects SHORT** |
 
-**Constraints**: agents receive pre-computed numbers; they **MUST NOT** perform arithmetic.
+**Constraints**:
+- Agents receive pre-computed numbers; they **MUST NOT** perform arithmetic.
+- **SPOT ONLY**: All agents MUST propose LONG positions only. No shorting.
+- `RiskAgent` MUST reject any `SetupProposal` with `direction=SHORT` → verdict `REJECTED`, reason `"Spot only – no shorting"`.
+- Positions < `min_position_eur` (€20) MUST be flagged `"Fees too high"` in the playbook.
+- See `config/spot_only.json` for the enforcement flag.
 
 ---
 
@@ -131,3 +136,23 @@ response. Every call is traced via Langfuse with inputs, outputs, latency, and t
 5. **Full observability** – Every LLM call is traced in Langfuse (prompt, response, latency, tokens, cost).
 6. **Minimal external dependencies** – v1 uses only Binance spot REST, Fear & Greed API, and 1-2 RSS feeds.
 7. **No state mutation** – The system never writes to an exchange. It is strictly read-and-report.
+8. **SPOT ONLY / LONG ONLY** – User trades Binance spot. No shorting, no futures, no margin. Every agent prompt must enforce LONG-only.
+
+---
+
+## ⚠️ Spot-Only Implementation Rules
+
+### ✅ DO
+
+- Every agent system prompt MUST include: *"Propose LONG positions only. Spot trading on Binance."*
+- `StrategyAgent` MUST set `direction=LONG` on all `SetupProposal` outputs.
+- `RiskAgent` MUST reject any setup with `direction=SHORT` → `verdict=REJECTED`, `verdict_reasoning="Spot only – no shorting"`.
+- Playbook builder MUST flag positions < `min_position_eur` (€20) with `"⚠️ Fees too high"`.
+- Load `config/spot_only.json` → if `only_long=true`, enforce the above.
+
+### ❌ DON'T
+
+- Do NOT generate SHORT `SetupProposal` — even if TA signals bearish, propose SKIP/HOLD, never SHORT.
+- Do NOT use futures or margin APIs.
+- Do NOT connect ccxt with write/trade API keys.
+- Do NOT suggest trades < €20 (fee drag makes them unprofitable on a €100 portfolio).

@@ -18,6 +18,7 @@ env/
 # Data & reports (large, regenerated) — anchored to project root
 /data/
 /reports/
+positions_template.json
 
 # Editors
 .vscode/
