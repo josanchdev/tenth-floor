@@ -58,21 +58,21 @@ Tab 3: Playbook → latest suggestions [Executed]
 - RiskAgent: reject SHORT proposals, flag positions < €20.
 - Load config/spot_only.json → enforce only_long=true.
 
-📊 V1 Roadmap — 7 tasks remaining
+📊 V1 Roadmap — 3 tasks remaining
 
-Done (6/13):
+Done (10/13):
 1. ~~src/data/market_data.py~~ — ccxt Binance OHLCV + Parquet cache ✓
 2. ~~src/data/sentiment.py~~ — Fear & Greed API + CoinDesk RSS ✓
 3. ~~src/features/ta_calculator.py~~ — EMA, RSI, MACD, BB, ATR, OBV ✓
 4. ~~src/features/pair_snapshot.py~~ — PairSnapshot assembly ✓
 5. ~~docs/workflow.md~~ — daily user guide ✓
 6. ~~config/ updates~~ — risk_profile.json, spot_only.json, positions_template.json ✓
+7. ~~src/agents/quant_agent.py~~ — trend regime + confidence (Langfuse + Gemini) ✓
+8. ~~src/agents/sentiment_agent.py~~ — risk narrative + bias label ✓
+9. ~~src/agents/strategy_agent.py~~ — LONG-only entry/SL/TP proposals ✓
+10. ~~src/agents/risk_agent.py~~ — position sizing + max-positions gate ✓
 
-Remaining (7 tasks to v1):
-7. src/agents/quant_agent.py — trend regime + confidence (needs Langfuse prompts) ⬜
-8. src/agents/sentiment_agent.py — risk narrative + bias label ⬜
-9. src/agents/strategy_agent.py — LONG-only entry/SL/TP proposals ⬜
-10. src/agents/risk_agent.py — position sizing + max-positions gate ⬜
+Remaining (3 tasks to v1):
 11. src/report/builder.py + exporter.py — playbook Markdown/HTML ⬜
 12. src/orchestration/pipeline.py + run_daily.py — wire everything + Gmail ⬜
 13. streamlit/app.py — CRUD positions.json (Dashboard, Trades, Playbook tabs) ⬜

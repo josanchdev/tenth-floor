@@ -1,0 +1,304 @@
+"""Unit tests for agent modules — mocked Gemini API, no real LLM calls."""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from crypto_swing_copilot.data.models import (
+    PairSnapshot,
+    PlaybookEntry,
+    PlaybookVerdict,
+    QuantSignal,
+    SentimentBias,
+    SentimentSignal,
+    SentimentSnapshot,
+    SetupAction,
+    SetupProposal,
+    SignalDirection,
+    TAIndicators,
+    TrendRegime,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sample_indicators() -> TAIndicators:
+    return TAIndicators(
+        ema_20=62000.0, ema_50=61500.0, ema_200=59000.0,
+        rsi_14=55.0,
+        macd_line=100.0, macd_signal=80.0, macd_histogram=20.0,
+        bb_upper=63000.0, bb_middle=62000.0, bb_lower=61000.0,
+        atr_14=500.0,
+        obv=1000000.0, volume_sma_20=50000.0,
+    )
+
+
+@pytest.fixture
+def sample_snapshot(sample_indicators: TAIndicators) -> PairSnapshot:
+    return PairSnapshot(
+        symbol="BTCUSDT",
+        timeframe="4h",
+        current_price=62000.0,
+        bar_timestamp=1710374400000,
+        indicators=sample_indicators,
+        sentiment=None,
+        recent_closes=[62000, 61800, 61500, 61200, 61000],
+        recent_volumes=[500, 480, 520, 510, 490],
+    )
+
+
+@pytest.fixture
+def sample_sentiment_snapshot() -> SentimentSnapshot:
+    return SentimentSnapshot(
+        fear_greed_value=65,
+        fear_greed_label="Greed",
+        fear_greed_trend=[65, 60, 55],
+        headlines=[],
+    )
+
+
+@pytest.fixture
+def sample_quant_signal() -> QuantSignal:
+    return QuantSignal(
+        symbol="BTCUSDT",
+        timeframe="4h",
+        trend_regime=TrendRegime.UPTREND,
+        signals=["EMA golden cross (20 > 50)", "Price above 200 EMA"],
+        confidence=0.78,
+        reasoning="Strong uptrend with EMA alignment.",
+    )
+
+
+@pytest.fixture
+def sample_sentiment_signal() -> SentimentSignal:
+    return SentimentSignal(
+        bias=SentimentBias.GREED,
+        risk_narrative="Market sentiment is moderately bullish.",
+        key_headlines=["BTC rallies past 62k"],
+        fear_greed_value=65,
+    )
+
+
+@pytest.fixture
+def sample_proposal() -> SetupProposal:
+    return SetupProposal(
+        symbol="BTCUSDT",
+        timeframe="4h",
+        direction=SignalDirection.LONG,
+        action=SetupAction.BUY,
+        entry_zone_low=61690.0,
+        entry_zone_high=62310.0,
+        stop_loss=61090.0,
+        take_profit=63510.0,
+        reward_risk_ratio=2.0,
+        rationale="Strong uptrend setup.",
+        confluence_factors=["EMA alignment", "Volume support"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# QuantAgent tests
+# ---------------------------------------------------------------------------
+
+
+class TestQuantAgent:
+    def test_run_returns_quant_signal(self, sample_snapshot: PairSnapshot) -> None:
+        """QuantAgent.run() returns a QuantSignal from mocked Gemini."""
+        mock_response = json.dumps({
+            "symbol": "BTCUSDT",
+            "timeframe": "4h",
+            "trend_regime": "uptrend",
+            "signals": ["Price above 200 EMA"],
+            "confidence": 0.75,
+            "reasoning": "Bullish trend.",
+        })
+
+        with patch("crypto_swing_copilot.agents.quant_agent.call_gemini", return_value=mock_response):
+            from crypto_swing_copilot.agents.quant_agent import QuantAgent
+            agent = QuantAgent()
+            result = agent.run(sample_snapshot)
+
+        assert isinstance(result, QuantSignal)
+        assert result.trend_regime == TrendRegime.UPTREND
+        assert result.confidence == 0.75
+
+    def test_prompt_contains_indicators(self, sample_snapshot: PairSnapshot) -> None:
+        """Prompt should include TA indicator values."""
+        from crypto_swing_copilot.agents.quant_agent import QuantAgent
+        prompt = QuantAgent._build_prompt(sample_snapshot)
+        assert "62000.0" in prompt  # EMA 20
+        assert "RSI 14: 55.0" in prompt
+
+
+# ---------------------------------------------------------------------------
+# SentimentAgent tests
+# ---------------------------------------------------------------------------
+
+
+class TestSentimentAgent:
+    def test_run_returns_sentiment_signal(
+        self, sample_sentiment_snapshot: SentimentSnapshot
+    ) -> None:
+        mock_response = json.dumps({
+            "bias": "greed",
+            "risk_narrative": "Market is greedy.",
+            "key_headlines": [],
+            "fear_greed_value": 65,
+        })
+
+        with patch("crypto_swing_copilot.agents.sentiment_agent.call_gemini", return_value=mock_response):
+            from crypto_swing_copilot.agents.sentiment_agent import SentimentAgent
+            agent = SentimentAgent()
+            result = agent.run(sample_sentiment_snapshot)
+
+        assert isinstance(result, SentimentSignal)
+        assert result.bias == SentimentBias.GREED
+        assert result.fear_greed_value == 65
+
+
+# ---------------------------------------------------------------------------
+# StrategyAgent tests
+# ---------------------------------------------------------------------------
+
+
+class TestStrategyAgent:
+    def test_run_returns_setup_proposal(
+        self,
+        sample_snapshot: PairSnapshot,
+        sample_quant_signal: QuantSignal,
+        sample_sentiment_signal: SentimentSignal,
+    ) -> None:
+        mock_response = json.dumps({
+            "symbol": "BTCUSDT",
+            "timeframe": "4h",
+            "direction": "long",
+            "action": "buy",
+            "entry_zone_low": 61690.0,
+            "entry_zone_high": 62310.0,
+            "stop_loss": 61090.0,
+            "take_profit": 63510.0,
+            "reward_risk_ratio": 2.0,
+            "rationale": "Strong setup.",
+            "confluence_factors": ["EMA alignment"],
+        })
+
+        with patch("crypto_swing_copilot.agents.strategy_agent.call_gemini", return_value=mock_response):
+            from crypto_swing_copilot.agents.strategy_agent import StrategyAgent
+            agent = StrategyAgent()
+            result = agent.run(sample_snapshot, sample_quant_signal, sample_sentiment_signal)
+
+        assert isinstance(result, SetupProposal)
+        assert result.direction == SignalDirection.LONG
+        assert result.action == SetupAction.BUY
+
+    def test_short_override_to_skip(
+        self,
+        sample_snapshot: PairSnapshot,
+        sample_quant_signal: QuantSignal,
+        sample_sentiment_signal: SentimentSignal,
+    ) -> None:
+        """If LLM returns SHORT, StrategyAgent must override to SKIP."""
+        mock_response = json.dumps({
+            "symbol": "BTCUSDT",
+            "timeframe": "4h",
+            "direction": "short",
+            "action": "sell",
+            "entry_zone_low": 61690.0,
+            "entry_zone_high": 62310.0,
+            "stop_loss": 63000.0,
+            "take_profit": 60000.0,
+            "reward_risk_ratio": 2.0,
+            "rationale": "Bearish signal.",
+            "confluence_factors": [],
+        })
+
+        with patch("crypto_swing_copilot.agents.strategy_agent.call_gemini", return_value=mock_response):
+            from crypto_swing_copilot.agents.strategy_agent import StrategyAgent
+            agent = StrategyAgent()
+            result = agent.run(sample_snapshot, sample_quant_signal, sample_sentiment_signal)
+
+        # Must be overridden to SKIP, not SHORT
+        assert result.direction == SignalDirection.NEUTRAL
+        assert result.action == SetupAction.SKIP
+
+
+# ---------------------------------------------------------------------------
+# RiskAgent tests
+# ---------------------------------------------------------------------------
+
+
+class TestRiskAgent:
+    def test_approve_valid_long(self, sample_proposal: SetupProposal) -> None:
+        """Valid LONG proposal with budget → APPROVED."""
+        portfolio = {
+            "portfolio_value_eur": 100.0,
+            "cash_eur": 100.0,
+            "open_positions": [],
+        }
+
+        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Approved."}]'):
+            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+            agent = RiskAgent()
+            entries = agent.run([sample_proposal], portfolio)
+
+        assert len(entries) == 1
+        assert entries[0].verdict == PlaybookVerdict.APPROVED
+        assert entries[0].position_size_pct > 0
+
+    def test_reject_short(self) -> None:
+        """SHORT proposal → REJECTED with 'Spot only'."""
+        short_proposal = SetupProposal(
+            symbol="BTCUSDT", timeframe="4h",
+            direction=SignalDirection.SHORT, action=SetupAction.SELL,
+            entry_zone_low=62000, entry_zone_high=62500,
+            stop_loss=63000, take_profit=60000,
+            reward_risk_ratio=2.0, rationale="Bearish.",
+        )
+        portfolio = {"portfolio_value_eur": 100.0, "cash_eur": 100.0, "open_positions": []}
+
+        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Rejected."}]'):
+            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+            agent = RiskAgent()
+            entries = agent.run([short_proposal], portfolio)
+
+        assert entries[0].verdict == PlaybookVerdict.REJECTED
+        assert "Spot only" in entries[0].verdict_reasoning
+
+    def test_reject_portfolio_full(self, sample_proposal: SetupProposal) -> None:
+        """3/3 positions open → REJECTED."""
+        portfolio = {
+            "portfolio_value_eur": 100.0,
+            "cash_eur": 1.0,
+            "open_positions": [{"pair": "X"}, {"pair": "Y"}, {"pair": "Z"}],
+        }
+
+        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Full."}]'):
+            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+            agent = RiskAgent()
+            entries = agent.run([sample_proposal], portfolio)
+
+        assert entries[0].verdict == PlaybookVerdict.REJECTED
+        assert "full" in entries[0].verdict_reasoning.lower()
+
+    def test_reject_fees_too_high(self, sample_proposal: SetupProposal) -> None:
+        """Position < €20 → REJECTED with fees warning."""
+        portfolio = {
+            "portfolio_value_eur": 30.0,
+            "cash_eur": 10.0,  # < min_position_eur (20)
+            "open_positions": [{"pair": "X"}, {"pair": "Y"}],
+        }
+
+        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Too small."}]'):
+            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+            agent = RiskAgent()
+            entries = agent.run([sample_proposal], portfolio)
+
+        assert entries[0].verdict == PlaybookVerdict.REJECTED
+        assert "Fees too high" in entries[0].verdict_reasoning
