@@ -4,83 +4,62 @@ Generated: 2026-03-20
 
 ## 1. What Is Complete
 
-### Committed — Task 11.5: Local LLM backend
+### Committed — Task 12: SQLite signal logger + outcome checker (commit `cc4a85d`)
+
+Two new components for signal persistence and outcome tracking:
+
+- **`db/schema.sql`** — updated: status default `PENDING` (was `OPEN`), new `entered_at` column for PENDING → OPEN transition timestamp
+- **`db/signal_logger.py`** — `SignalLogger` class: `log()` inserts approved signals with status PENDING, `open_signal_count()` counts PENDING+OPEN, `get_active_signals()` returns signals for outcome checking, `update_signal()` with column-whitelist safety. Signal ID format: `{pair}_{date}_{uuid[:8]}`
+- **`check_outcomes.py`** — standalone script (no LLM calls). Walks 4h candles chronologically for each active signal. PENDING → OPEN when candle low enters entry zone. SL/TP detection on candle high/low (SL-first on same-candle ambiguity). MAE/MFE tracked during walk. 14-day expiry. Groups signals by pair to minimise fetches. `--dry-run` flag for preview.
+- **`tests/test_signal_logger.py`** — 8 tests: schema init, log/skip, counts, updates, column-whitelist rejection, Langfuse trace
+- **`tests/test_check_outcomes.py`** — 11 tests: PENDING→OPEN, TP hit, SL hit, same-candle SL wins, entry+TP in same walk, MAE/MFE, pending expiry, open expiry, no-candles edge case, full DB integration
+
+### Committed — Task 11.5: Local LLM backend (commit `610ad9c`)
 
 Full migration from Google Gemini to local open-source inference:
 
 - **`agents/base.py`** — `call_gemini()` → `call_llm()` with provider-agnostic routing via OpenAI-compatible API. New `clean_json_response()` strips Qwen3 `<think>` blocks and code fences. Removed `google-genai` dependency. `load_agent_config()` now merges `defaults` section from `models.yaml` with per-agent overrides. `LLM_BASE_URL` env var override.
-- **`agents/quant_agent.py`** — updated imports; significantly improved prompt with explicit trend regime definitions, confidence scoring criteria, signal label catalogue, and example output.
-- **`agents/sentiment_agent.py`** — updated imports; improved prompt with bias classification guidance, headline-shift rules, and example output.
-- **`agents/strategy_agent.py`** — updated imports; improved prompt with explicit decision framework, confluence factor catalogue, and BUY/SKIP examples.
-- **`agents/risk_agent.py`** — updated imports; uses `clean_json_response()` for LLM output cleanup instead of inline regex.
-- **`config/models.yaml`** — new `defaults` section with `provider: openai`, `base_url`, `model: qwen3-32b`. Per-agent sections now only override temperature and max_output_tokens.
+- **All 4 agents** — updated imports, significantly improved prompts with explicit examples, structured scoring criteria, Qwen3-compatible formatting
+- **`config/models.yaml`** — new `defaults` section with `provider: openai`, `base_url`, `model: qwen3-32b`
 - **`pyproject.toml`** — `google-genai` → `openai`
 - **`.env.example`** — replaced `GOOGLE_API_KEY` with `LLM_BASE_URL` and `OPENAI_API_KEY` docs
-- **`tests/test_agents.py`** — all mock targets updated `call_gemini` → `call_llm`; added `TestCleanJsonResponse` (4 tests) and `TestParseJsonResponse` (3 tests)
+- **`tests/test_agents.py`** — all mock targets updated; added 7 new tests for base utilities
 
 ### Committed — Task 11 (commit `be4c7fb`)
 
 Full V2 pivot of the agent layer and its contracts:
 
-- **`config/risk_profile.json`** — removed V1 EUR budget fields; added `conviction_tiers` (high: 0.80/2%, standard: 0.65/1%)
-- **`config/services.yaml`** — removed `reporting` section; added `discord` and `database` sections
+- **`config/risk_profile.json`** — removed V1 EUR budget fields; added `conviction_tiers`
 - **`data/models.py`** — `PlaybookEntry` now has `confidence_score`, `conviction`, `suggested_risk_pct`
-- **`agents/risk_agent.py`** — V2 rewrite: `run()` takes `list[tuple[SetupProposal, float]]`; removed all EUR logic; `_compute_verdict()` and `_resolve_conviction()`
+- **`agents/risk_agent.py`** — V2 rewrite: `run()` takes `list[tuple[SetupProposal, float]]`
 - **`positions.json`** — deleted
-- **`pyproject.toml`** — `jinja2` → `requests`; entrypoint updated; description updated
 
 ### Committed — Pre-Task 11 quality fixes (commit `1e60a93`)
 
 - `config.py` — central path resolver; all consumers updated
 - `PlaybookVerdict.REDUCED` removed from `models.py`
-- `.gitignore` updated; `db/schema.sql` created with VISION.md DDL
-
-### Documentation (post-Task 11.5)
-
-- `README.md` — rewritten for V2 + local LLM stack
-- `docs/architecture.md` — Mermaid flowchart updated for vLLM/Qwen3, outcome checker node added, module reference updated
-- `docs/signals.md` — signal lifecycle updated to `PENDING → OPEN → HIT_TP | HIT_SL | EXPIRED`, outcome checker design documented
-- `KNOWN_LIMITATIONS.md` — updated Gemini references to LLM-generic
+- `db/schema.sql` created with VISION.md DDL
 
 ### Test coverage
 
-51 tests passing across 4 files. All mocked — no network calls, no LLM server required.
+70 tests passing across 6 files. All mocked — no network calls, no LLM server required.
 
 ---
 
 ## 2. Commit History
 
 ```
+cc4a85d feat: SQLite signal logger + candle-walk outcome checker (Task 12)
+610ad9c feat: switch LLM backend to local Qwen3 32B via vLLM              ← Task 11.5
 c6d3205 docs: add V2 documentation — architecture, signals, known limitations
-be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers   ← Task 11
+be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers ← Task 11
 1e60a93 fix: surgical code quality fixes pre-V2 pivot
 3f94ca7 docs: add VISION.md — V2 Discord Signal Provider brief
 ```
 
-Task 11.5 changes are staged but not yet committed.
-
 ---
 
 ## 3. What Is Next
-
-### Task 12 — SQLite signal logger + outcome checker
-
-Two components:
-
-**`src/crypto_swing_copilot/db/signal_logger.py`**:
-- `SignalLogger.log(entry: PlaybookEntry)` — insert approved signal with status `PENDING`
-- Apply `db/schema.sql` DDL on first run (`CREATE TABLE IF NOT EXISTS`)
-- `signal_id` = `{pair}_{report_date}_{uuid4()[:8]}`
-- `open_signal_count()` → used by Discord embed footer
-
-**`src/crypto_swing_copilot/check_outcomes.py`** (standalone script):
-- Runs independently from main.py — no LLM calls
-- For each PENDING/OPEN signal, fetch 4h candles since `created_at`
-- PENDING → OPEN: when candle low ≤ entry_zone_high (price enters entry zone)
-- Chronological candle walk: first of `candle.low ≤ SL` or `candle.high ≥ TP` wins
-- Same-candle ambiguity: assume SL hit first (conservative)
-- Record MAE and MFE during the walk
-- 14-day expiry: OPEN signals older than 14 days → `EXPIRED`
 
 ### Task 13 — Discord webhook notifier
 
@@ -88,6 +67,7 @@ Create `src/crypto_swing_copilot/notifications/discord_notifier.py`:
 - `DiscordNotifier.post(entries: list[PlaybookEntry], open_count: int)` — posts one embed
 - Embed spec: see `docs/signals.md` and `VISION.md §Discord Embed Spec`
 - `DISCORD_WEBHOOK_URL` from env; no-op with warning if unset
+- 1-second sleep between sends if ever extended to multiple embeds
 
 ### Task 14 — Admin dashboard
 
@@ -97,7 +77,7 @@ Create `src/crypto_swing_copilot/dashboard/app.py` (Streamlit):
 
 ### Orchestrator (`main.py`)
 
-Create `src/crypto_swing_copilot/main.py` after Tasks 12–13:
+Create `src/crypto_swing_copilot/main.py` after Task 13:
 - Fetch OHLCV for all universe pairs
 - Fetch sentiment snapshot (once, shared)
 - For each pair: `SnapshotBuilder → QuantAgent → SentimentAgent → StrategyAgent`
@@ -119,8 +99,12 @@ Create `src/crypto_swing_copilot/main.py` after Tasks 12–13:
 
 5. **14-day expiry** — swing trades unresolved after 14 calendar days are marked EXPIRED. Aligns with weekly swing timeframe.
 
-6. **`max_open_positions` removed from `risk_profile.json`** — V2 is a signal provider, not a portfolio manager.
+6. **`entered_at` column added to schema** — not in original VISION.md DDL. Records the timestamp when PENDING flips to OPEN (candle entered entry zone). Needed for accurate signal duration tracking.
 
-7. **`RiskAgent.run()` interface is `list[tuple[SetupProposal, float]]`** — explicit, ordering-safe.
+7. **`update_signal()` uses column whitelist** — only `status`, `entered_at`, `outcome_price`, `outcome_date`, `max_adverse_excursion`, `max_favorable_excursion` can be updated. Prevents accidental modification of immutable signal fields.
 
-8. **`_resolve_conviction()` returns `("none", 0.0)` for sub-threshold confidence** — defensive default; never appears in published signals.
+8. **Outcome checker groups by pair** — fetches candles once per pair, then processes all signals for that pair. Minimises Binance API calls when multiple signals exist for the same pair.
+
+9. **`max_open_positions` removed from `risk_profile.json`** — V2 is a signal provider, not a portfolio manager.
+
+10. **`RiskAgent.run()` interface is `list[tuple[SetupProposal, float]]`** — explicit, ordering-safe.

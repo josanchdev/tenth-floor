@@ -108,6 +108,7 @@ Approved signals are persisted to `data/playbook_history.db` (git-ignored). The 
 CREATE TABLE IF NOT EXISTS signals (
     signal_id                TEXT PRIMARY KEY,
     created_at               TEXT NOT NULL,
+    entered_at               TEXT,              -- when PENDING → OPEN
     report_date              TEXT NOT NULL,
     pair                     TEXT NOT NULL,
     timeframe                TEXT NOT NULL,
@@ -121,7 +122,7 @@ CREATE TABLE IF NOT EXISTS signals (
     reward_risk              REAL NOT NULL,
     suggested_risk_pct       REAL NOT NULL,
     strategy_rationale       TEXT,
-    status                   TEXT NOT NULL DEFAULT 'OPEN',
+    status                   TEXT NOT NULL DEFAULT 'PENDING',
     outcome_price            REAL,
     outcome_date             TEXT,
     max_adverse_excursion    REAL,

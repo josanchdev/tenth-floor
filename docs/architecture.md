@@ -31,8 +31,8 @@ flowchart TD
 
     subgraph Output["Output Layer"]
         PE["PlaybookEntry list\nmodels.py"]
-        DB["SQLite Logger\ndata/playbook_history.db\n[Task 12 — pending]"]
-        CO["Outcome Checker\ncheck_outcomes.py\n4h candle walk · MAE/MFE\n[Task 12 — pending]"]
+        DB["SQLite Logger\ndb/signal_logger.py\ndata/playbook_history.db"]
+        CO["Outcome Checker\ncheck_outcomes.py\n4h candle walk · MAE/MFE"]
         DW["Discord Webhook\none embed per daily run\n[Task 13 — pending]"]
         AD["Admin Dashboard\nStreamlit · signal history\n[Task 14 — pending]"]
     end
@@ -62,6 +62,7 @@ flowchart TD
 
     PE --> DB
     PE --> DW
+    BIN -- "4h candles\n(reuses MarketDataFetcher)" --> CO
     DB --> CO
     DB --> AD
 ```
@@ -85,6 +86,8 @@ flowchart TD
 | `agents/sentiment_agent.py` | Classifies macro sentiment bias and generates a risk narrative from `SentimentSnapshot`. | `SentimentAgent` |
 | `agents/strategy_agent.py` | Proposes LONG trade setups. Price levels (entry zone, SL, TP) are computed by Python; LLM decides LONG or SKIP. Hardcoded SHORT rejection. | `StrategyAgent` |
 | `agents/risk_agent.py` | Final gatekeeper. Rejects SHORTs, rejects confidence < 0.65, assigns conviction tier (`high`/`standard`), enriches reasoning via LLM. Takes `(SetupProposal, confidence)` tuples. | `RiskAgent` |
+| `db/signal_logger.py` | SQLite persistence for approved signals. Applies schema on init, generates signal IDs, manages status updates. Column-whitelist on updates prevents injection. | `SignalLogger` |
+| `check_outcomes.py` | Standalone outcome checker. Walks 4h candles chronologically for PENDING/OPEN signals. Detects entry-zone fill, TP/SL hits (SL-first on ambiguity), tracks MAE/MFE, applies 14-day expiry. Groups by pair to minimise fetches. | `check_outcomes`, `_process_signal` |
 
 ### `config/`
 
@@ -145,7 +148,6 @@ Everything upstream of the agents produces or enriches a `PairSnapshot`. Everyth
 
 | Task | Description | Blocked by |
 |---|---|---|
-| Task 12 | SQLite signal logger + outcome checker — writes approved signals, tracks TP/SL via 4h candle walk, records MAE/MFE, 14-day expiry | — |
-| Task 13 | Discord webhook notifier — posts the daily consolidated embed | Task 12 (needs open-signal count from DB) |
-| Task 14 | Admin Streamlit dashboard — signal history, outcome tracking | Task 12 |
-| Orchestrator | `main.py` — wires the full pipeline end-to-end | Tasks 12–13 |
+| Task 13 | Discord webhook notifier — posts the daily consolidated embed | — |
+| Task 14 | Admin Streamlit dashboard — signal history, outcome tracking | — |
+| Orchestrator | `main.py` — wires the full pipeline end-to-end | Task 13 |

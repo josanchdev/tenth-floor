@@ -28,7 +28,7 @@ Fear & Greed   ──┘        (Python)              (Qwen3 32B via vLLM)
 | Feature engine (TA indicators, snapshot assembly) | **Complete** |
 | Agent layer (Quant, Sentiment, Strategy, Risk) | **Complete** |
 | LLM backend (local inference via vLLM) | **Complete** |
-| SQLite signal logger + outcome checker | Task 12 — pending |
+| SQLite signal logger + outcome checker | **Complete** |
 | Discord webhook notifier | Task 13 — pending |
 | Admin dashboard | Task 14 — pending |
 | Daily orchestrator (`main.py`) | Pending (blocked on Tasks 12–13) |
@@ -84,7 +84,7 @@ Edit `.env` and fill in:
 pytest
 ```
 
-51 tests, no network calls, no LLM server required.
+70 tests, no network calls, no LLM server required.
 
 ---
 
@@ -159,7 +159,10 @@ crypto-swing-copilot/
 │       ├── sentiment_agent.py # Macro sentiment bias
 │       ├── strategy_agent.py  # LONG setup proposal
 │       └── risk_agent.py      # Conviction tier assignment + gating
-├── tests/                     # 51 unit tests, all mocked
+│   └── db/
+│       └── signal_logger.py   # SQLite signal persistence + queries
+│   ├── check_outcomes.py   # Standalone 4h candle walker for TP/SL resolution
+├── tests/                     # 70 unit tests, all mocked
 ├── VISION.md                  # Product brief and V2 pivot spec
 ├── KNOWN_LIMITATIONS.md       # Documented deferred items
 └── .env.example               # Required environment variables
