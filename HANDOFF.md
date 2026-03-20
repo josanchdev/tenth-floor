@@ -40,15 +40,33 @@ Full V2 pivot of the agent layer and its contracts:
 - `PlaybookVerdict.REDUCED` removed from `models.py`
 - `db/schema.sql` created with VISION.md DDL
 
+### Documentation commits
+
+- `65d06d7` — docs: update architecture and handoff for Task 12
+- `c6d3205` — docs: add V2 documentation — architecture, signals, known limitations
+
 ### Test coverage
 
 70 tests passing across 6 files. All mocked — no network calls, no LLM server required.
 
 ---
 
-## 2. Commit History
+## 2. Uncommitted Changes
+
+**`agents/base.py`** — Langfuse observability fix (in progress):
+- Changed `from openai import OpenAI` → `from langfuse.openai import OpenAI`
+- Removed `@observe(name="llm_call")` decorator from `call_llm()`
+- The `langfuse.openai.OpenAI` wrapper auto-instruments every `create()` call as a Langfuse **generation** event (captures tokens, model, messages, latency)
+- Agent-level `@observe` decorators on `run()` methods remain — gives two-level traces: agent span → LLM generation
+- 70/70 tests still passing
+- **This should be committed before starting Task 13**
+
+---
+
+## 3. Commit History
 
 ```
+65d06d7 docs: update architecture and handoff for Task 12
 cc4a85d feat: SQLite signal logger + candle-walk outcome checker (Task 12)
 610ad9c feat: switch LLM backend to local Qwen3 32B via vLLM              ← Task 11.5
 c6d3205 docs: add V2 documentation — architecture, signals, known limitations
@@ -59,7 +77,11 @@ be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers ←
 
 ---
 
-## 3. What Is Next
+## 4. What Is Next
+
+### Commit the Langfuse fix
+
+The `base.py` change (§2 above) is tested and ready. Commit it before proceeding.
 
 ### Task 13 — Discord webhook notifier
 
@@ -87,24 +109,28 @@ Create `src/crypto_swing_copilot/main.py` after Task 13:
 
 ---
 
-## 4. Decisions Made Not in VISION.md
+## 5. Decisions Made Not in VISION.md
 
 1. **Local LLM inference** — switched from Google Gemini to Qwen3 32B via vLLM. Provider-agnostic `call_llm()` supports any OpenAI-compatible API. Config-only model switching.
 
-2. **Signal lifecycle: PENDING → OPEN** — signals start as PENDING; only flip to OPEN when price enters the entry zone. This prevents counting unfilled signals as winners.
+2. **Langfuse integration uses `langfuse.openai.OpenAI`** — not `@observe` on the LLM call function. The OpenAI wrapper auto-captures token usage, model name, prompt content, and latency as a generation event. Agent-level `@observe` decorators remain for parent spans, giving two-level tracing.
 
-3. **Outcome tracking via candle walk** — `check_outcomes.py` walks 4h candles chronologically, checking high/low (not close). First condition met (TP or SL) wins. Conservative same-candle assumption (SL first).
+3. **Signal lifecycle: PENDING → OPEN** — signals start as PENDING; only flip to OPEN when price enters the entry zone. This prevents counting unfilled signals as winners.
 
-4. **MAE/MFE tracked during candle walk** — recorded per-signal during outcome checking, not as a separate pass. Gives Task 15 (performance analytics) its data for free.
+4. **Outcome tracking via candle walk** — `check_outcomes.py` walks 4h candles chronologically, checking high/low (not close). First condition met (TP or SL) wins. Conservative same-candle assumption (SL first).
 
-5. **14-day expiry** — swing trades unresolved after 14 calendar days are marked EXPIRED. Aligns with weekly swing timeframe.
+5. **MAE/MFE tracked during candle walk** — recorded per-signal during outcome checking, not as a separate pass. Gives Task 15 (performance analytics) its data for free.
 
-6. **`entered_at` column added to schema** — not in original VISION.md DDL. Records the timestamp when PENDING flips to OPEN (candle entered entry zone). Needed for accurate signal duration tracking.
+6. **14-day expiry** — swing trades unresolved after 14 calendar days are marked EXPIRED. Aligns with weekly swing timeframe.
 
-7. **`update_signal()` uses column whitelist** — only `status`, `entered_at`, `outcome_price`, `outcome_date`, `max_adverse_excursion`, `max_favorable_excursion` can be updated. Prevents accidental modification of immutable signal fields.
+7. **`entered_at` column added to schema** — not in original VISION.md DDL. Records the timestamp when PENDING flips to OPEN (candle entered entry zone). Needed for accurate signal duration tracking.
 
-8. **Outcome checker groups by pair** — fetches candles once per pair, then processes all signals for that pair. Minimises Binance API calls when multiple signals exist for the same pair.
+8. **`update_signal()` uses column whitelist** — only `status`, `entered_at`, `outcome_price`, `outcome_date`, `max_adverse_excursion`, `max_favorable_excursion` can be updated. Prevents accidental modification of immutable signal fields.
 
-9. **`max_open_positions` removed from `risk_profile.json`** — V2 is a signal provider, not a portfolio manager.
+9. **Outcome checker groups by pair** — fetches candles once per pair, then processes all signals for that pair. Minimises Binance API calls when multiple signals exist for the same pair.
 
-10. **`RiskAgent.run()` interface is `list[tuple[SetupProposal, float]]`** — explicit, ordering-safe.
+10. **`max_open_positions` removed from `risk_profile.json`** — V2 is a signal provider, not a portfolio manager.
+
+11. **`RiskAgent.run()` interface is `list[tuple[SetupProposal, float]]`** — explicit, ordering-safe.
+
+12. **VISION.md locked files section is outdated** — all four agent files have been unlocked and rewritten for Task 11.5 (local LLM). The lock is no longer in effect.

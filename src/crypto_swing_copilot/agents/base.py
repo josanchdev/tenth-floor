@@ -20,8 +20,8 @@ from typing import TypeVar
 
 import yaml
 from dotenv import load_dotenv
-from langfuse import Langfuse, observe
-from openai import OpenAI
+from langfuse import Langfuse
+from langfuse.openai import OpenAI
 from pydantic import BaseModel
 
 from crypto_swing_copilot.config import CONFIG_DIR
@@ -96,7 +96,6 @@ def load_risk_profile() -> dict:
         return json.load(fh)
 
 
-@observe(name="llm_call")
 def call_llm(
     *,
     agent_name: str,
@@ -112,7 +111,8 @@ def call_llm(
     """Call an LLM and return the raw text response.
 
     Provider-agnostic — routes to the backend specified by ``provider``.
-    Automatically traced by Langfuse via ``@observe``.
+    Automatically traced by Langfuse via ``langfuse.openai.OpenAI`` wrapper
+    (captures tokens, model, messages, latency as a generation event).
 
     Parameters
     ----------
