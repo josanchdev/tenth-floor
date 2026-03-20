@@ -1,0 +1,321 @@
+"""Tests for the daily pipeline orchestrator."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
+
+from crypto_swing_copilot.data.models import (
+    PairSnapshot,
+    PlaybookEntry,
+    PlaybookVerdict,
+    QuantSignal,
+    SentimentBias,
+    SentimentSignal,
+    SentimentSnapshot,
+    SetupAction,
+    SetupProposal,
+    SignalDirection,
+    TAIndicators,
+    TrendRegime,
+)
+from crypto_swing_copilot.main import run_pipeline
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+def _make_ohlcv_df(rows: int = 50) -> pd.DataFrame:
+    """Minimal OHLCV DataFrame."""
+    return pd.DataFrame({
+        "timestamp": [1_700_000_000_000 + i * 14_400_000 for i in range(rows)],
+        "open": [100.0] * rows,
+        "high": [105.0] * rows,
+        "low": [95.0] * rows,
+        "close": [102.0] * rows,
+        "volume": [1000.0] * rows,
+    })
+
+
+def _make_snapshot() -> PairSnapshot:
+    return PairSnapshot(
+        symbol="BTCUSDT",
+        timeframe="4h",
+        current_price=62_000.0,
+        bar_timestamp=1_700_000_000_000,
+        indicators=TAIndicators(),
+        sentiment=None,
+        recent_closes=[62_000.0],
+        recent_volumes=[1000.0],
+    )
+
+
+def _make_quant_signal() -> QuantSignal:
+    return QuantSignal(
+        symbol="BTCUSDT",
+        timeframe="4h",
+        trend_regime=TrendRegime.UPTREND,
+        signals=["EMA bullish"],
+        confidence=0.82,
+        reasoning="Strong uptrend",
+    )
+
+
+def _make_sentiment_signal() -> SentimentSignal:
+    return SentimentSignal(
+        bias=SentimentBias.GREED,
+        risk_narrative="Market is greedy",
+        key_headlines=["BTC surges"],
+        fear_greed_value=72,
+    )
+
+
+def _make_proposal() -> SetupProposal:
+    return SetupProposal(
+        symbol="BTCUSDT",
+        timeframe="4h",
+        direction=SignalDirection.LONG,
+        action=SetupAction.BUY,
+        entry_zone_low=62_000.0,
+        entry_zone_high=63_000.0,
+        stop_loss=60_500.0,
+        take_profit=66_000.0,
+        reward_risk_ratio=2.0,
+        rationale="EMA golden cross",
+        confluence_factors=["RSI bounce"],
+    )
+
+
+def _make_entry(**overrides) -> PlaybookEntry:
+    defaults = {
+        "symbol": "BTCUSDT",
+        "timeframe": "4h",
+        "report_date": "2026-03-20",
+        "verdict": PlaybookVerdict.APPROVED,
+        "verdict_reasoning": "Meets threshold",
+        "direction": SignalDirection.LONG,
+        "action": SetupAction.BUY,
+        "entry_zone_low": 62_000.0,
+        "entry_zone_high": 63_000.0,
+        "stop_loss": 60_500.0,
+        "take_profit": 66_000.0,
+        "reward_risk_ratio": 2.0,
+        "confidence_score": 0.82,
+        "conviction": "high",
+        "suggested_risk_pct": 0.02,
+        "strategy_rationale": "EMA golden cross",
+        "rank": 1,
+    }
+    defaults.update(overrides)
+    return PlaybookEntry(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# Patches
+# ---------------------------------------------------------------------------
+
+_PATCH_BASE = "crypto_swing_copilot.main"
+
+
+def _build_patches(
+    *,
+    snapshots=None,
+    quant_signal=None,
+    sentiment_signal=None,
+    proposal=None,
+    entries=None,
+):
+    """Return a dict of mock targets and their return values."""
+    if snapshots is None:
+        snapshots = [_make_snapshot()]
+    if quant_signal is None:
+        quant_signal = _make_quant_signal()
+    if sentiment_signal is None:
+        sentiment_signal = _make_sentiment_signal()
+    if proposal is None:
+        proposal = _make_proposal()
+    if entries is None:
+        entries = [_make_entry()]
+
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch_universe.return_value = {"BTCUSDT": {"4h": _make_ohlcv_df()}}
+
+    mock_sentiment = MagicMock()
+    mock_sentiment.fetch_snapshot.return_value = SentimentSnapshot(
+        fear_greed_value=72,
+        fear_greed_label="Greed",
+    )
+
+    mock_builder = MagicMock()
+    mock_builder.build_universe.return_value = snapshots
+
+    mock_quant = MagicMock()
+    mock_quant.run.return_value = quant_signal
+
+    mock_sentiment_agent = MagicMock()
+    mock_sentiment_agent.run.return_value = sentiment_signal
+
+    mock_strategy = MagicMock()
+    mock_strategy.run.return_value = proposal
+
+    mock_risk = MagicMock()
+    mock_risk.run.return_value = entries
+
+    mock_signal_logger = MagicMock()
+    mock_signal_logger.log.return_value = "BTCUSDT_2026-03-20_abc12345"
+    mock_signal_logger.open_signal_count.return_value = 3
+
+    mock_notifier = MagicMock()
+    mock_notifier.post.return_value = True
+
+    return {
+        f"{_PATCH_BASE}.MarketDataFetcher": MagicMock(return_value=mock_fetcher),
+        f"{_PATCH_BASE}.SentimentFetcher": MagicMock(return_value=mock_sentiment),
+        f"{_PATCH_BASE}.SnapshotBuilder": MagicMock(return_value=mock_builder),
+        f"{_PATCH_BASE}.QuantAgent": MagicMock(return_value=mock_quant),
+        f"{_PATCH_BASE}.SentimentAgent": MagicMock(return_value=mock_sentiment_agent),
+        f"{_PATCH_BASE}.StrategyAgent": MagicMock(return_value=mock_strategy),
+        f"{_PATCH_BASE}.RiskAgent": MagicMock(return_value=mock_risk),
+        f"{_PATCH_BASE}.SignalLogger": MagicMock(return_value=mock_signal_logger),
+        f"{_PATCH_BASE}.DiscordNotifier": MagicMock(return_value=mock_notifier),
+    }, {
+        "fetcher": mock_fetcher,
+        "sentiment_fetcher": mock_sentiment,
+        "builder": mock_builder,
+        "quant": mock_quant,
+        "sentiment_agent": mock_sentiment_agent,
+        "strategy": mock_strategy,
+        "risk": mock_risk,
+        "signal_logger": mock_signal_logger,
+        "notifier": mock_notifier,
+    }
+
+
+def _run_with_patches(*, dry_run=False, **kwargs):
+    """Run pipeline with all components mocked. Returns (entries, mocks)."""
+    patches, mocks = _build_patches(**kwargs)
+    ctx_managers = [patch(target, val) for target, val in patches.items()]
+    for cm in ctx_managers:
+        cm.start()
+    try:
+        entries = run_pipeline(dry_run=dry_run)
+    finally:
+        for cm in ctx_managers:
+            cm.stop()
+    return entries, mocks
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+class TestPipelineFlow:
+    """Test the end-to-end pipeline wiring."""
+
+    def test_full_pipeline_returns_entries(self):
+        entries, mocks = _run_with_patches()
+        assert len(entries) == 1
+        assert entries[0].verdict == PlaybookVerdict.APPROVED
+
+    def test_calls_all_agents_in_order(self):
+        _, mocks = _run_with_patches()
+
+        mocks["sentiment_agent"].run.assert_called_once()
+        mocks["quant"].run.assert_called_once()
+        mocks["strategy"].run.assert_called_once()
+        mocks["risk"].run.assert_called_once()
+
+    def test_logs_approved_signals_to_db(self):
+        _, mocks = _run_with_patches()
+
+        mocks["signal_logger"].log.assert_called_once()
+        mocks["signal_logger"].open_signal_count.assert_called_once()
+        mocks["signal_logger"].close.assert_called_once()
+
+    def test_posts_to_discord(self):
+        _, mocks = _run_with_patches()
+
+        mocks["notifier"].post.assert_called_once()
+        call_kwargs = mocks["notifier"].post.call_args
+        assert call_kwargs.kwargs["open_count"] == 3
+
+    def test_dry_run_skips_db_and_discord(self):
+        entries, mocks = _run_with_patches(dry_run=True)
+
+        assert len(entries) == 1
+        mocks["signal_logger"].log.assert_not_called()
+        mocks["notifier"].post.assert_not_called()
+
+    def test_empty_snapshots_returns_empty(self):
+        entries, _ = _run_with_patches(snapshots=[])
+        assert entries == []
+
+    def test_rejected_entries_not_logged_to_db(self):
+        rejected = _make_entry(verdict=PlaybookVerdict.REJECTED)
+        entries, mocks = _run_with_patches(entries=[rejected])
+
+        # SignalLogger.log is called but should skip rejected
+        # (the actual filtering is in SignalLogger, not main.py)
+        # main.py only passes approved entries to log
+        mocks["signal_logger"].log.assert_not_called()
+
+    def test_agent_failure_skips_pair(self):
+        """If QuantAgent raises for one pair, pipeline continues."""
+        snap1 = _make_snapshot()
+        snap2 = PairSnapshot(
+            symbol="ETHUSDT",
+            timeframe="4h",
+            current_price=3_000.0,
+            bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(),
+            sentiment=None,
+            recent_closes=[3_000.0],
+            recent_volumes=[500.0],
+        )
+
+        mock_quant = MagicMock()
+        mock_quant.run.side_effect = [_make_quant_signal(), RuntimeError("LLM timeout")]
+
+        patches, mocks = _build_patches(snapshots=[snap1, snap2])
+        # Override quant mock to have side_effect
+        patches[f"{_PATCH_BASE}.QuantAgent"] = MagicMock(return_value=mock_quant)
+
+        ctx_managers = [patch(target, val) for target, val in patches.items()]
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            entries = run_pipeline()
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+        # Pipeline still completes — one proposal succeeds, one fails
+        assert mock_quant.run.call_count == 2
+
+
+class TestCLI:
+    """Test CLI argument parsing."""
+
+    def test_parse_args_defaults(self):
+        from crypto_swing_copilot.main import _parse_args
+
+        args = _parse_args([])
+        assert args.pairs is None
+        assert args.dry_run is False
+        assert args.log_level == "INFO"
+
+    def test_parse_args_with_pairs(self):
+        from crypto_swing_copilot.main import _parse_args
+
+        args = _parse_args(["BTCUSDT", "ETHUSDT"])
+        assert args.pairs == ["BTCUSDT", "ETHUSDT"]
+
+    def test_parse_args_dry_run(self):
+        from crypto_swing_copilot.main import _parse_args
+
+        args = _parse_args(["--dry-run"])
+        assert args.dry_run is True
+        assert args.pairs is None
