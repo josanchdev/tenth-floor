@@ -5,15 +5,15 @@ Receives ``(SetupProposal, confidence_score)`` pairs and produces
 ``PlaybookEntry[]`` with conviction tiers and suggested risk percentages.
 
 This agent is **mostly Python logic** with a thin LLM layer for verdict reasoning:
-  • Reject SHORT proposals → "Spot only – no shorting"
-  • Reject skip/hold actions from StrategyAgent
-  • Skip low-confidence setups (confidence < 0.65)
-  • Assign conviction tier and suggested_risk_pct (Python, not LLM)
+  - Reject SHORT proposals → "Spot only – no shorting"
+  - Reject skip/hold actions from StrategyAgent
+  - Skip low-confidence setups (confidence < 0.65)
+  - Assign conviction tier and suggested_risk_pct (Python, not LLM)
 
 Conviction tier logic (from VISION.md):
-  • confidence >= 0.80 → high    → suggested_risk_pct = 0.02
-  • confidence >= 0.65 → standard → suggested_risk_pct = 0.01
-  • confidence <  0.65 → SKIP, do not publish
+  - confidence >= 0.80 → high    → suggested_risk_pct = 0.02
+  - confidence >= 0.65 → standard → suggested_risk_pct = 0.01
+  - confidence <  0.65 → SKIP, do not publish
 
 Usage::
 
@@ -27,13 +27,13 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import datetime, timezone
 
 from langfuse import observe
 
 from crypto_swing_copilot.agents.base import (
-    call_gemini,
+    call_llm,
+    clean_json_response,
     load_agent_config,
     load_risk_profile,
 )
@@ -51,11 +51,18 @@ You are RiskAgent, the final risk gatekeeper for a crypto spot signal provider.
 Your job is to write a brief verdict_reasoning (1-2 sentences) for each setup.
 The actual verdict (approved/rejected) and conviction tier are computed by Python.
 
-You receive the setup details and the Python-computed verdict. Write concise reasoning.
+You receive the setup details and the Python-computed verdict. Write concise reasoning
+that a subscriber would find useful — explain WHY the setup is approved or rejected.
 
 RULES:
-- SPOT ONLY. Reject any SHORT proposal.
-- Respond ONLY with valid JSON: a list of objects with "symbol" and "verdict_reasoning".
+- SPOT ONLY. Any SHORT proposal is automatically rejected.
+- You must respond with a JSON array of objects with "symbol" and "verdict_reasoning".
+
+OUTPUT FORMAT:
+[
+  {"symbol": "BTCUSDT", "verdict_reasoning": "<1-2 sentences>"},
+  {"symbol": "ETHUSDT", "verdict_reasoning": "<1-2 sentences>"}
+]
 """
 
 
@@ -179,29 +186,28 @@ class RiskAgent:
             return entries
 
         # Build context for LLM
-        summaries_prompt = "Generate brief verdict reasoning (1-2 sentences each) for these setups:\n\n"
+        summaries_prompt = "Write brief verdict reasoning (1-2 sentences each) for these setups:\n\n"
         for e in entries:
             summaries_prompt += (
                 f"- {e.symbol} {e.timeframe}: verdict={e.verdict.value}, "
                 f"direction={e.direction.value}, action={e.action.value}, "
                 f"RR={e.reward_risk_ratio:.1f}, conviction={e.conviction}\n"
             )
-        summaries_prompt += "\nRespond with JSON: a list of {\"symbol\": \"...\", \"verdict_reasoning\": \"...\"}"
 
         try:
-            raw = call_gemini(
+            raw = call_llm(
                 agent_name="risk_agent",
                 system_prompt=_SYSTEM_PROMPT,
                 user_prompt=summaries_prompt,
-                model=self._config.get("model", "gemini-2.5-flash"),
+                model=self._config.get("model", "qwen3-32b"),
                 temperature=self._config.get("temperature", 0.0),
                 max_output_tokens=self._config.get("max_output_tokens", 512),
+                provider=self._config.get("provider", "openai"),
+                base_url=self._config.get("base_url", "http://localhost:8000/v1"),
             )
 
             # Parse reasoning
-            cleaned = raw.strip()
-            cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
-            cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+            cleaned = clean_json_response(raw)
             data = json.loads(cleaned)
 
             reasoning_map = {item["symbol"]: item["verdict_reasoning"] for item in data}

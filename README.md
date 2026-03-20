@@ -8,12 +8,12 @@ Subscribers receive a daily signal embed with full mathematical and agentic reas
 
 ## What It Does
 
-The pipeline fetches Binance spot OHLCV data for 15 pairs, computes technical indicators deterministically in Python, then routes enriched snapshots through a four-agent LLM pipeline (Gemini 2.5 Flash). Approved signals are published to Discord and logged to SQLite.
+The pipeline fetches Binance spot OHLCV data for 15 pairs, computes technical indicators deterministically in Python, then routes enriched snapshots through a four-agent LLM pipeline. Approved signals are published to Discord and logged to SQLite.
 
 ```
 Binance OHLCV  ──┐
                  ├─→  Feature Engine  →  Quant + Sentiment + Strategy + Risk  →  Discord + SQLite
-Fear & Greed   ──┘        (Python)                   (Gemini 2.5 Flash)
+Fear & Greed   ──┘        (Python)              (Qwen3 32B via vLLM)
 ```
 
 **Hard constraints:** spot only · no leverage · no futures · no auto-execution · LONG setups only
@@ -27,7 +27,8 @@ Fear & Greed   ──┘        (Python)                   (Gemini 2.5 Flash)
 | Data layer (market data, sentiment, models) | **Complete** |
 | Feature engine (TA indicators, snapshot assembly) | **Complete** |
 | Agent layer (Quant, Sentiment, Strategy, Risk) | **Complete** |
-| SQLite signal logger | Task 12 — pending |
+| LLM backend (local inference via vLLM) | **Complete** |
+| SQLite signal logger + outcome checker | Task 12 — pending |
 | Discord webhook notifier | Task 13 — pending |
 | Admin dashboard | Task 14 — pending |
 | Daily orchestrator (`main.py`) | Pending (blocked on Tasks 12–13) |
@@ -41,7 +42,8 @@ See [docs/architecture.md](docs/architecture.md) for the full system diagram.
 ### Requirements
 
 - Python 3.11+
-- A Google Gemini API key
+- Local LLM inference server (vLLM recommended) with Qwen3 32B or compatible model
+- GPU with ≥ 32GB VRAM (RTX 5090 or equivalent)
 - A Langfuse account (free tier works)
 - A Discord webhook URL (for output — not required to run the pipeline locally)
 
@@ -51,6 +53,12 @@ See [docs/architecture.md](docs/architecture.md) for the full system diagram.
 git clone <repo>
 cd crypto-swing-copilot
 pip install -e ".[dev]"
+```
+
+### Start the inference server
+
+```bash
+vllm serve Qwen/Qwen3-32B --port 8000
 ```
 
 ### Environment variables
@@ -63,10 +71,11 @@ Edit `.env` and fill in:
 
 | Variable | Required | Description |
 |---|---|---|
-| `GOOGLE_API_KEY` | Yes | Gemini API key |
 | `LANGFUSE_PUBLIC_KEY` | Yes | Langfuse project public key |
 | `LANGFUSE_SECRET_KEY` | Yes | Langfuse project secret key |
 | `LANGFUSE_HOST` | No | Self-hosted Langfuse URL (default: cloud.langfuse.com) |
+| `LLM_BASE_URL` | No | Override inference server URL (default: `http://localhost:8000/v1`) |
+| `OPENAI_API_KEY` | No | Only if your inference server requires auth |
 | `DISCORD_WEBHOOK_URL` | Task 13 | Discord webhook for signal publishing |
 
 ### Run tests
@@ -75,7 +84,7 @@ Edit `.env` and fill in:
 pytest
 ```
 
-44 tests, no network calls, no LLM API keys required.
+51 tests, no network calls, no LLM server required.
 
 ---
 
@@ -94,6 +103,20 @@ Signals below 0.65 confidence are silently dropped. See [docs/signals.md](docs/s
 
 ---
 
+## LLM Backend
+
+The system uses a **local-first** inference architecture. `call_llm()` in `base.py` routes to any OpenAI-compatible API — no vendor lock-in.
+
+| Setting | Value |
+|---|---|
+| Default model | Qwen3 32B |
+| Inference server | vLLM (OpenAI-compatible) |
+| Config file | `config/models.yaml` |
+
+To switch models or providers, edit `models.yaml` only — no code changes required.
+
+---
+
 ## Design Principles
 
 1. **Python owns all math.** `pandas-ta` computes RSI, ATR, EMA, Bollinger Bands. LLMs never do arithmetic.
@@ -102,6 +125,7 @@ Signals below 0.65 confidence are silently dropped. See [docs/signals.md](docs/s
 4. **Glass box.** Every signal includes full reasoning. Every LLM call is traced in Langfuse.
 5. **Graceful degradation.** Sentiment sources failing never crashes the pipeline.
 6. **No secrets in config.** All keys are environment variables; config files are safe to commit.
+7. **Local-first inference.** No cloud API dependency. Model switching is a config change.
 
 ---
 
@@ -112,7 +136,7 @@ crypto-swing-copilot/
 ├── config/
 │   ├── universe.json          # 15 Binance spot pairs to analyse
 │   ├── risk_profile.json      # Conviction tiers, SL/TP parameters
-│   ├── models.yaml            # LLM model + temperature per agent
+│   ├── models.yaml            # LLM provider, model, temperature per agent
 │   ├── services.yaml          # External service configuration
 │   └── spot_only.json         # Spot-only enforcement rules
 ├── db/
@@ -130,12 +154,12 @@ crypto-swing-copilot/
 │   │   ├── ta_calculator.py   # pandas-ta indicator computation
 │   │   └── pair_snapshot.py   # PairSnapshot assembly
 │   └── agents/
-│       ├── base.py            # Gemini call wrapper, config loaders
+│       ├── base.py            # Provider-agnostic LLM call, config loaders
 │       ├── quant_agent.py     # Trend regime + confidence score
 │       ├── sentiment_agent.py # Macro sentiment bias
-│       ├── strategy_agent.py  # LONG setup proposal (LOCKED)
+│       ├── strategy_agent.py  # LONG setup proposal
 │       └── risk_agent.py      # Conviction tier assignment + gating
-├── tests/                     # 44 unit tests, all mocked
+├── tests/                     # 51 unit tests, all mocked
 ├── VISION.md                  # Product brief and V2 pivot spec
 ├── KNOWN_LIMITATIONS.md       # Documented deferred items
 └── .env.example               # Required environment variables

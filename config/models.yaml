@@ -1,29 +1,30 @@
 # LLM model assignments for each agent.
-# All agents use Gemini 2.5 Flash by default in v1.
-# To switch an individual agent to an OSS model (e.g. via Ollama),
-# replace the value with the appropriate model identifier and update
-# the corresponding provider init in src/agents/<agent>.py.
+#
+# Provider routing: change 'defaults.provider' and 'defaults.base_url'
+# to switch all agents at once, or override per agent for mixed deployments.
+#
+# Supported providers:
+#   openai — any OpenAI-compatible API (vLLM, Ollama, llama.cpp, OpenAI)
+#
+# The LLM_BASE_URL env var overrides defaults.base_url if set.
+
+defaults:
+  provider: openai
+  base_url: http://localhost:8000/v1    # vLLM server
+  model: qwen3-32b
 
 quant_agent:
-  provider: google          # google | ollama | openai
-  model: gemini-2.5-flash
   temperature: 0.1          # Low temp → deterministic regime classification
   max_output_tokens: 1024
 
 sentiment_agent:
-  provider: google
-  model: gemini-2.5-flash
   temperature: 0.3          # Slightly higher → richer narrative
   max_output_tokens: 512
 
 strategy_agent:
-  provider: google
-  model: gemini-2.5-flash
   temperature: 0.1          # Low temp → consistent structured JSON output
   max_output_tokens: 2048
 
 risk_agent:
-  provider: google
-  model: gemini-2.5-flash
   temperature: 0.0          # Zero temp → strict rule application
   max_output_tokens: 512

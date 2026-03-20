@@ -14,7 +14,7 @@ This document defines exactly what a signal is, how it is produced, and how it i
 | ≥ 0.65 | `standard` | 1% of portfolio |
 | < 0.65 | — | Signal dropped, not published |
 
-The confidence score is LLM-generated from indicator consensus. It is a policy input, not a statistically calibrated probability. See [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md#2-quantagent-confidence-score-is-not-statistically-calibrated).
+The confidence score is LLM-generated (Qwen3 32B) from indicator consensus. It is a policy input, not a statistically calibrated probability. See [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md#2-quantagent-confidence-score-is-not-statistically-calibrated).
 
 ---
 
@@ -130,6 +130,13 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 ```
 
-`status` lifecycle: `OPEN` → `HIT_TP` | `HIT_SL` | `EXPIRED`. Outcome fields are updated manually or via the admin dashboard (Task 14).
+`status` lifecycle: `PENDING` → `OPEN` → `HIT_TP` | `HIT_SL` | `EXPIRED`.
+
+- `PENDING`: Signal published but price has not entered the entry zone yet.
+- `OPEN`: A 4h candle low dipped into the entry zone — signal is active.
+- `HIT_TP` / `HIT_SL`: Candle high/low reached TP or SL (chronological order, first hit wins; same-candle ambiguity assumes SL first — conservative).
+- `EXPIRED`: 14 calendar days with no TP or SL hit.
+
+Outcome tracking runs via `check_outcomes.py`, a standalone script that walks 4h candles chronologically for each open signal. Records MAE (max adverse excursion) and MFE (max favourable excursion) along the way.
 
 Implemented in Task 12.

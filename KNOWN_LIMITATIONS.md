@@ -25,7 +25,7 @@ A correct implementation derives the entry zone from ATR-based support and resis
 
 **Source:** `agents/quant_agent.py` — LLM JSON output field `confidence`
 
-The `confidence` field (0–1) is produced by Gemini from its interpretation of the indicator set. It is not derived from a backtested model with historical win-rate calibration.
+The `confidence` field (0–1) is produced by the LLM (Qwen3 32B) from its interpretation of the indicator set. It is not derived from a backtested model with historical win-rate calibration.
 
 **Impact:** The conviction thresholds (0.65 for `standard`, 0.80 for `high`) are policy decisions, not probability estimates. A score of 0.80 does not mean the setup has an 80% win rate.
 

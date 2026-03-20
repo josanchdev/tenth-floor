@@ -17,7 +17,7 @@ dependencies = [
     "pandas-ta>=0.3.14b0",            # Technical indicators (b0 = valid PEP 440)
     "pydantic>=2.5.0",                # Typed models / JSON schemas
     "langfuse>=2.0.0",                # LLM observability & tracing
-    "google-genai>=1.0.0",            # Gemini API (unified SDK, supports gemini-3.x)
+    "openai>=1.0.0",                  # OpenAI-compatible API (vLLM, Ollama, OpenAI)
     "feedparser>=6.0.10",             # RSS parsing
     "pyarrow>=15.0.0",                # Parquet I/O
     "requests>=2.31.0",               # Discord webhook HTTP calls

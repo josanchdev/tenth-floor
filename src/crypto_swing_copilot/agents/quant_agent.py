@@ -2,10 +2,10 @@
 QuantAgent — classifies trend regime and technical signals.
 
 Receives a ``PairSnapshot`` and produces a ``QuantSignal`` with:
-  • Trend regime (strong_uptrend → strong_downtrend)
-  • Signal labels (e.g. "RSI oversold", "EMA golden cross")
-  • Confidence score (0–1)
-  • LLM-generated reasoning
+  - Trend regime (strong_uptrend → strong_downtrend)
+  - Signal labels (e.g. "RSI oversold", "EMA golden cross")
+  - Confidence score (0–1) based on indicator consensus
+  - LLM-generated reasoning
 
 Usage::
 
@@ -22,7 +22,7 @@ import logging
 from langfuse import observe
 
 from crypto_swing_copilot.agents.base import (
-    call_gemini,
+    call_llm,
     load_agent_config,
     parse_json_response,
 )
@@ -31,33 +31,64 @@ from crypto_swing_copilot.data.models import PairSnapshot, QuantSignal
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
-You are QuantAgent, a technical analysis classifier for crypto spot trading.
+You are QuantAgent, a technical analysis classifier for crypto spot markets.
+
+You receive pre-computed technical indicators for a single trading pair.
+Your job is to classify the trend, identify active signals, and score confidence.
 
 RULES:
-- You receive pre-computed technical indicators. DO NOT recompute any numbers.
-- Classify the trend regime and identify technical signals.
-- Assign a confidence score (0.0–1.0) based on indicator consensus.
-- Your output is LONG-biased analysis only (spot trading, no shorting).
-- Respond ONLY with valid JSON matching the schema below.
+- All indicator values are pre-computed by Python. Do NOT recompute any numbers.
+- Quote indicator values from the input when referencing them in reasoning.
+- Analysis is LONG-biased (spot trading, no shorting).
+- You must respond with a JSON object.
 
-OUTPUT JSON SCHEMA:
+TREND REGIMES (pick exactly one):
+- "strong_uptrend": Price above all EMAs, bullish MACD, RSI > 60
+- "uptrend": Price above EMA 50/200, generally bullish momentum
+- "sideways": No clear trend, RSI near 50, mixed EMA signals
+- "downtrend": Price below EMA 50/200, generally bearish momentum
+- "strong_downtrend": Price below all EMAs, bearish MACD, RSI < 40
+
+CONFIDENCE SCORING (0.0 to 1.0):
+- 0.80–1.00: Strong consensus — multiple indicators confirm the same direction
+- 0.65–0.79: Moderate consensus — most indicators align, some neutral or mixed
+- 0.50–0.64: Weak consensus — conflicting signals, no clear setup
+- Below 0.50: Indicators actively contradict each other
+
+SIGNAL LABELS (include all that apply from this list):
+- "EMA golden cross (20 > 50)"
+- "EMA death cross (20 < 50)"
+- "Price above 200 EMA"
+- "Price below 200 EMA"
+- "RSI oversold (< 30)"
+- "RSI overbought (> 70)"
+- "MACD bullish crossover"
+- "MACD bearish crossover"
+- "Bollinger Band squeeze"
+- "Price at BB lower (potential support)"
+- "Price at BB upper (potential resistance)"
+- "OBV divergence"
+- "Volume surge above SMA"
+
+OUTPUT FORMAT:
 {
   "symbol": "<pair>",
   "timeframe": "<tf>",
-  "trend_regime": "strong_uptrend|uptrend|sideways|downtrend|strong_downtrend",
-  "signals": ["list of signal labels"],
-  "confidence": 0.0-1.0,
-  "reasoning": "explanation"
+  "trend_regime": "<one of the five regimes above>",
+  "signals": ["<signal labels from the list above>"],
+  "confidence": <float 0.0-1.0>,
+  "reasoning": "<2-3 sentences explaining the classification>"
 }
 
-SIGNAL EXAMPLES:
-- "EMA golden cross (20 > 50)"
-- "RSI oversold (< 30)"
-- "MACD bullish crossover"
-- "Price above 200 EMA"
-- "Bollinger Band squeeze"
-- "OBV divergence"
-- "Volume surge above SMA"
+EXAMPLE:
+{
+  "symbol": "ETHUSDT",
+  "timeframe": "4h",
+  "trend_regime": "uptrend",
+  "signals": ["Price above 200 EMA", "MACD bullish crossover", "Volume surge above SMA"],
+  "confidence": 0.74,
+  "reasoning": "ETH is trading above the 200 EMA at 3420.00 with a fresh MACD bullish crossover. Volume is 1.3x the 20-period SMA, confirming buying pressure. RSI at 58 shows room to run but is not yet overbought."
+}
 """
 
 
@@ -84,13 +115,15 @@ class QuantAgent:
         """
         user_prompt = self._build_prompt(snapshot)
 
-        raw = call_gemini(
+        raw = call_llm(
             agent_name="quant_agent",
             system_prompt=_SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            model=self._config.get("model", "gemini-2.5-flash"),
+            model=self._config.get("model", "qwen3-32b"),
             temperature=self._config.get("temperature", 0.1),
             max_output_tokens=self._config.get("max_output_tokens", 1024),
+            provider=self._config.get("provider", "openai"),
+            base_url=self._config.get("base_url", "http://localhost:8000/v1"),
         )
 
         signal = parse_json_response(raw, QuantSignal)
@@ -131,6 +164,4 @@ TECHNICAL INDICATORS:
 - Volume SMA 20: {ind.volume_sma_20}
 
 RECENT CLOSES (newest first): [{closes_str}]
-
-Respond with JSON only.
 """

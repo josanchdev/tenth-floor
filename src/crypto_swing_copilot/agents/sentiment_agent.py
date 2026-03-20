@@ -3,9 +3,9 @@ SentimentAgent — produces risk narrative and bias label from sentiment data.
 
 Receives a ``SentimentSnapshot`` (Fear & Greed + RSS headlines) and produces
 a ``SentimentSignal`` with:
-  • Macro sentiment bias (extreme_fear → extreme_greed)
-  • Risk narrative (LLM-generated)
-  • Key headlines selected by the agent
+  - Macro sentiment bias (extreme_fear → extreme_greed)
+  - Risk narrative (LLM-generated)
+  - Key headlines selected by the agent
 
 Usage::
 
@@ -22,7 +22,7 @@ import logging
 from langfuse import observe
 
 from crypto_swing_copilot.agents.base import (
-    call_gemini,
+    call_llm,
     load_agent_config,
     parse_json_response,
 )
@@ -31,29 +31,42 @@ from crypto_swing_copilot.data.models import SentimentSignal, SentimentSnapshot
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
-You are SentimentAgent, a crypto market sentiment analyst for spot trading.
+You are SentimentAgent, a crypto market sentiment analyst for a spot-only signal provider.
+
+You receive the Fear & Greed index and recent news headlines.
+Your job is to classify macro sentiment and write a risk narrative for LONG-only traders.
 
 RULES:
-- You receive the Fear & Greed index and recent news headlines.
-- Classify the macro sentiment bias and write a concise risk narrative.
-- Select the 2-3 most impactful headlines.
-- This is for SPOT / LONG-ONLY trading — focus on buy-side sentiment risk.
-- Respond ONLY with valid JSON matching the schema below.
+- Classify bias using the Fear & Greed value and headline tone together.
+- The narrative should help a spot trader decide whether NOW is a good time to enter.
+- Select the 2-3 most market-moving headlines. If no headlines are provided, return an empty list.
+- You must respond with a JSON object.
 
-OUTPUT JSON SCHEMA:
+BIAS CLASSIFICATION:
+- "extreme_fear" (F&G 0-20): Panic selling, potential capitulation — contrarian buy signal
+- "fear" (F&G 21-40): Cautious market, risk-off — selective entries only
+- "neutral" (F&G 41-60): No strong bias — rely on technicals
+- "greed" (F&G 61-80): Bullish momentum — trend-following setups favoured
+- "extreme_greed" (F&G 81-100): Euphoria, overextension risk — tighten stops
+
+Headlines can shift the bias ±1 level from what the F&G value alone suggests.
+For example, F&G 62 (greed) with a major hack headline could shift to "neutral".
+
+OUTPUT FORMAT:
 {
-  "bias": "extreme_fear|fear|neutral|greed|extreme_greed",
-  "risk_narrative": "2-3 sentence narrative about current market sentiment and risk",
-  "key_headlines": ["most impactful headline titles"],
-  "fear_greed_value": <quoted from input, integer 0-100>
+  "bias": "<one of the five bias labels above>",
+  "risk_narrative": "<2-3 sentences: what does this mean for a spot LONG trader today?>",
+  "key_headlines": ["<most impactful headline titles, max 3>"],
+  "fear_greed_value": <integer, quoted from input>
 }
 
-BIAS MAPPING:
-- 0-20: extreme_fear
-- 21-40: fear
-- 41-60: neutral
-- 61-80: greed
-- 81-100: extreme_greed
+EXAMPLE:
+{
+  "bias": "greed",
+  "risk_narrative": "Fear & Greed at 68 with a rising 7-day trend signals sustained buying interest. BTC ETF inflow headlines reinforce institutional demand. Spot long entries on pullbacks are favoured; avoid chasing breakouts at these sentiment levels.",
+  "key_headlines": ["BlackRock BTC ETF sees $500M single-day inflow", "Fed signals rate pause through Q3"],
+  "fear_greed_value": 68
+}
 """
 
 
@@ -80,13 +93,15 @@ class SentimentAgent:
         """
         user_prompt = self._build_prompt(snapshot)
 
-        raw = call_gemini(
+        raw = call_llm(
             agent_name="sentiment_agent",
             system_prompt=_SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            model=self._config.get("model", "gemini-2.5-flash"),
+            model=self._config.get("model", "qwen3-32b"),
             temperature=self._config.get("temperature", 0.3),
             max_output_tokens=self._config.get("max_output_tokens", 512),
+            provider=self._config.get("provider", "openai"),
+            base_url=self._config.get("base_url", "http://localhost:8000/v1"),
         )
 
         signal = parse_json_response(raw, SentimentSignal)
@@ -108,7 +123,7 @@ class SentimentAgent:
         trend_str = " → ".join(str(v) for v in snapshot.fear_greed_trend) or "no trend data"
 
         return f"""\
-Analyse the current crypto market sentiment.
+Analyse the current crypto market sentiment for spot LONG traders.
 
 FEAR & GREED INDEX:
 - Current value: {snapshot.fear_greed_value}
@@ -117,6 +132,4 @@ FEAR & GREED INDEX:
 
 RECENT HEADLINES:
 {headlines_str if headlines_str else "No headlines available."}
-
-Respond with JSON only. Remember to quote the fear_greed_value from the input.
 """
