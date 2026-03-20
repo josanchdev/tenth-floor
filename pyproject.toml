@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "crypto-swing-copilot"
 version = "0.1.0"
-description = "Manual crypto swing-trading research copilot"
+description = "The Tenth Floor AI — glass-box crypto signal provider"
 authors = [{name = "Josanchdev", email = "jsanagui@gmail.com"}]
 license = "MIT"
 readme = "README.md"
@@ -20,7 +20,7 @@ dependencies = [
     "google-genai>=1.0.0",            # Gemini API (unified SDK, supports gemini-3.x)
     "feedparser>=6.0.10",             # RSS parsing
     "pyarrow>=15.0.0",                # Parquet I/O
-    "jinja2>=3.1.0",                  # HTML report templating
+    "requests>=2.31.0",               # Discord webhook HTTP calls
     "typer>=0.12.0",                  # CLI
     "rich>=13.7.0",                   # Pretty console output
     "python-dotenv>=1.0.0",           # .env loading
@@ -37,7 +37,7 @@ dev = [
 ]
 
 [project.scripts]
-run-daily = "crypto_swing_copilot.orchestration.run_daily:run_daily"
+run-daily = "crypto_swing_copilot.main:main"
 
 # Tell hatchling that the Python package lives under src/
 [tool.hatch.build.targets.wheel]

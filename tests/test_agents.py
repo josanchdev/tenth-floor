@@ -236,21 +236,30 @@ class TestStrategyAgent:
 
 class TestRiskAgent:
     def test_approve_valid_long(self, sample_proposal: SetupProposal) -> None:
-        """Valid LONG proposal with budget → APPROVED."""
-        portfolio = {
-            "portfolio_value_eur": 100.0,
-            "cash_eur": 100.0,
-            "open_positions": [],
-        }
-
-        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Approved."}]'):
+        """High-confidence LONG → APPROVED, conviction=high, risk=2%."""
+        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Strong setup approved."}]'):
             from crypto_swing_copilot.agents.risk_agent import RiskAgent
             agent = RiskAgent()
-            entries = agent.run([sample_proposal], portfolio)
+            entries = agent.run([(sample_proposal, 0.82)])
 
         assert len(entries) == 1
         assert entries[0].verdict == PlaybookVerdict.APPROVED
-        assert entries[0].position_size_pct > 0
+        assert entries[0].conviction == "high"
+        assert entries[0].suggested_risk_pct == 0.02
+        assert entries[0].confidence_score == 0.82
+
+    def test_approve_standard_conviction(self, sample_proposal: SetupProposal) -> None:
+        """Mid-confidence LONG → APPROVED, conviction=standard, risk=1%."""
+        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Acceptable setup."}]'):
+            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+            agent = RiskAgent()
+            entries = agent.run([(sample_proposal, 0.71)])
+
+        assert len(entries) == 1
+        assert entries[0].verdict == PlaybookVerdict.APPROVED
+        assert entries[0].conviction == "standard"
+        assert entries[0].suggested_risk_pct == 0.01
+        assert entries[0].confidence_score == 0.71
 
     def test_reject_short(self) -> None:
         """SHORT proposal → REJECTED with 'Spot only'."""
@@ -261,44 +270,23 @@ class TestRiskAgent:
             stop_loss=63000, take_profit=60000,
             reward_risk_ratio=2.0, rationale="Bearish.",
         )
-        portfolio = {"portfolio_value_eur": 100.0, "cash_eur": 100.0, "open_positions": []}
 
         with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Rejected."}]'):
             from crypto_swing_copilot.agents.risk_agent import RiskAgent
             agent = RiskAgent()
-            entries = agent.run([short_proposal], portfolio)
+            entries = agent.run([(short_proposal, 0.85)])
 
         assert entries[0].verdict == PlaybookVerdict.REJECTED
         assert "Spot only" in entries[0].verdict_reasoning
 
-    def test_reject_portfolio_full(self, sample_proposal: SetupProposal) -> None:
-        """3/3 positions open → REJECTED."""
-        portfolio = {
-            "portfolio_value_eur": 100.0,
-            "cash_eur": 1.0,
-            "open_positions": [{"pair": "X"}, {"pair": "Y"}, {"pair": "Z"}],
-        }
-
-        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Full."}]'):
+    def test_reject_low_confidence(self, sample_proposal: SetupProposal) -> None:
+        """Confidence below 0.65 threshold → REJECTED."""
+        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Low confidence."}]'):
             from crypto_swing_copilot.agents.risk_agent import RiskAgent
             agent = RiskAgent()
-            entries = agent.run([sample_proposal], portfolio)
+            entries = agent.run([(sample_proposal, 0.50)])
 
         assert entries[0].verdict == PlaybookVerdict.REJECTED
-        assert "full" in entries[0].verdict_reasoning.lower()
-
-    def test_reject_fees_too_high(self, sample_proposal: SetupProposal) -> None:
-        """Position < €20 → REJECTED with fees warning."""
-        portfolio = {
-            "portfolio_value_eur": 30.0,
-            "cash_eur": 10.0,  # < min_position_eur (20)
-            "open_positions": [{"pair": "X"}, {"pair": "Y"}],
-        }
-
-        with patch("crypto_swing_copilot.agents.risk_agent.call_gemini", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Too small."}]'):
-            from crypto_swing_copilot.agents.risk_agent import RiskAgent
-            agent = RiskAgent()
-            entries = agent.run([sample_proposal], portfolio)
-
-        assert entries[0].verdict == PlaybookVerdict.REJECTED
-        assert "Fees too high" in entries[0].verdict_reasoning
+        assert "Confidence" in entries[0].verdict_reasoning
+        assert entries[0].conviction == "none"
+        assert entries[0].suggested_risk_pct == 0.0

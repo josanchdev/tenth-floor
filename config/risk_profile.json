@@ -1,7 +1,4 @@
 {
-  "max_open_positions": 3,
-  "max_risk_per_trade": 0.1,
-  "_comment_risk": "2% of total portfolio per trade. Position size computed by Python, not LLM.",
   "timeframes": ["4h", "1d"],
   "no_leverage": true,
   "no_futures": true,
@@ -13,10 +10,15 @@
   "_comment_sl": "Default SL = entry ± (ATR_14 × 1.5). StrategyAgent may narrow but not widen.",
   "take_profit_rr_ratio": 2.0,
   "_comment_tp": "Minimum reward-to-risk ratio of 2:1 for a setup to be included in playbook.",
-  "target_cash_utilization": 1.0,
-  "_comment_utilization": "Spend 100% of available cash across max_open_positions.",
-  "min_position_eur": 20,
-  "_comment_min_pos": "Ignore setups where position size would be < €20. Fees kill profitability on tiny trades.",
-  "trading_fees_pct": 0.001,
-  "_comment_fees": "Binance spot taker fee: 0.1%. Used for net position sizing."
+  "conviction_tiers": {
+    "high": {
+      "min_confidence": 0.80,
+      "suggested_risk_pct": 0.02
+    },
+    "standard": {
+      "min_confidence": 0.65,
+      "suggested_risk_pct": 0.01
+    }
+  },
+  "_comment_conviction": "Confidence >= 0.80 → high conviction (2% risk). >= 0.65 → standard (1% risk). < 0.65 → SKIP, do not publish."
 }

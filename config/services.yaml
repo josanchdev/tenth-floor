@@ -1,9 +1,9 @@
-# External service configuration for crypto-swing-copilot v1.
-# Secrets (API keys) are loaded from environment variables – never hard-coded here.
+# External service configuration for The Tenth Floor AI (V2).
+# Secrets (API keys, webhook URLs) are loaded from environment variables – never hard-coded here.
 
 market_data:
   provider: ccxt/binance
-  mode: spot                          # spot only; futures forbidden in v1
+  mode: spot                          # spot only; futures forbidden
   access: read_only                   # CCXT is initialised without API keys (public endpoints)
   ohlcv_limit: 500                    # bars per fetch (max supported by Binance)
   cache_dir: data/raw                 # local Parquet cache relative to project root
@@ -26,8 +26,10 @@ observability:
     flush_at: 15                      # batch size before flushing traces
     flush_interval: 30                # seconds between auto-flushes
 
-reporting:
-  output_dir: reports                 # YYYY-MM-DD/ subdir created per run
-  formats:
-    - markdown                        # always produced
-    - html                            # optional; requires jinja2
+discord:
+  # Set DISCORD_WEBHOOK_URL in your .env file.
+  rate_limit_sleep_s: 1               # seconds between webhook sends (future multi-embed use)
+
+database:
+  path: data/playbook_history.db      # SQLite signal log, relative to project root
+  schema: db/schema.sql               # DDL applied on first run via CREATE TABLE IF NOT EXISTS

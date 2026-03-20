@@ -319,10 +319,11 @@ class SetupProposal(BaseModel):
 
 
 class PlaybookEntry(BaseModel):
-    """Output of RiskAgent — final vetted setup for the daily playbook.
+    """Output of RiskAgent — final vetted signal for the daily playbook.
 
-    Represents one actionable (or rejected) entry in the report.
-    Position size is computed by Python from risk_profile.json params.
+    Represents one publishable (or rejected) signal. Approved entries
+    carry conviction tier and suggested risk percentage instead of
+    EUR position sizing.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -339,7 +340,7 @@ class PlaybookEntry(BaseModel):
         ..., description="RiskAgent's final call"
     )
     verdict_reasoning: str = Field(
-        ..., description="Why the setup was approved, reduced, or rejected"
+        ..., description="Why the signal was approved or rejected"
     )
 
     # Inherited from SetupProposal (pass-through if approved)
@@ -351,10 +352,17 @@ class PlaybookEntry(BaseModel):
     take_profit: float = Field(..., gt=0)
     reward_risk_ratio: float = Field(..., gt=0)
 
-    # Position sizing (computed by Python, NOT the LLM)
-    position_size_pct: float = Field(
+    # Conviction tier (computed by Python from QuantAgent confidence)
+    confidence_score: float = Field(
         ..., ge=0.0, le=1.0,
-        description="Position size as fraction of portfolio (e.g. 0.02 = 2%)",
+        description="QuantAgent confidence score (0–1)",
+    )
+    conviction: str = Field(
+        ..., description="Conviction tier: 'high' or 'standard'"
+    )
+    suggested_risk_pct: float = Field(
+        ..., ge=0.0, le=1.0,
+        description="Suggested portfolio risk per trade (e.g. 0.02 = 2%)",
     )
 
     # Summaries from upstream agents
@@ -392,5 +400,5 @@ class DailyPlaybook(BaseModel):
 
     @property
     def approved_entries(self) -> list[PlaybookEntry]:
-        """Return only approved or reduced setups."""
+        """Return only approved entries (rejected are excluded)."""
         return [e for e in self.entries if e.verdict != PlaybookVerdict.REJECTED]
