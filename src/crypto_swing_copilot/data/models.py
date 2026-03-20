@@ -69,7 +69,6 @@ class PlaybookVerdict(str, Enum):
     """RiskAgent's final verdict on a setup."""
 
     APPROVED = "approved"
-    REDUCED = "reduced"      # approved with smaller position
     REJECTED = "rejected"
 
 

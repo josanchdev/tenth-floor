@@ -27,22 +27,15 @@ import logging
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Final
 
 import feedparser
 import yaml
 
+from crypto_swing_copilot.config import CONFIG_DIR
 from crypto_swing_copilot.data.models import RSSHeadline, SentimentSnapshot
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-_PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
-_CONFIG_DIR: Final[Path] = _PROJECT_ROOT / "config"
 
 _REQUEST_TIMEOUT_S: Final[int] = 10
 
@@ -58,7 +51,7 @@ _FG_DEFAULT_LABEL: Final[str] = "Neutral"
 
 def _load_sentiment_config() -> dict:
     """Load ``config/services.yaml`` and return the ``sentiment`` section."""
-    path = _CONFIG_DIR / "services.yaml"
+    path = CONFIG_DIR / "services.yaml"
     with open(path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
     return cfg.get("sentiment", {})

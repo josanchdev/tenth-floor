@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-from pathlib import Path
 from typing import TypeVar
 
 import google.genai as genai
@@ -19,12 +18,11 @@ from dotenv import load_dotenv
 from langfuse import Langfuse, observe
 from pydantic import BaseModel
 
+from crypto_swing_copilot.config import CONFIG_DIR
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_CONFIG_DIR = _PROJECT_ROOT / "config"
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -54,7 +52,7 @@ def load_agent_config(agent_name: str) -> dict:
     dict
         Keys: ``model``, ``temperature``, ``max_output_tokens``.
     """
-    path = _CONFIG_DIR / "models.yaml"
+    path = CONFIG_DIR / "models.yaml"
     with open(path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
     agent_cfg = cfg.get(agent_name, {})
@@ -65,14 +63,14 @@ def load_agent_config(agent_name: str) -> dict:
 
 def load_risk_profile() -> dict:
     """Load ``config/risk_profile.json``."""
-    path = _CONFIG_DIR / "risk_profile.json"
+    path = CONFIG_DIR / "risk_profile.json"
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
 
 def load_spot_config() -> dict:
     """Load ``config/spot_only.json``."""
-    path = _CONFIG_DIR / "spot_only.json"
+    path = CONFIG_DIR / "spot_only.json"
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 

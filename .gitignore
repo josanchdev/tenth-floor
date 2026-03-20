@@ -20,6 +20,9 @@ env/
 /reports/
 positions_template.json
 
+# SQLite database (regenerated at runtime; schema is in db/schema.sql)
+data/playbook_history.db
+
 # Editors
 .vscode/
 .idea/

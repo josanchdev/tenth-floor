@@ -32,14 +32,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
 
+from crypto_swing_copilot.config import CONFIG_DIR, PROJECT_ROOT
+
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-_PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
-_CONFIG_DIR: Final[Path] = _PROJECT_ROOT / "config"
 
 # Binance OHLCV column order returned by ccxt
 _OHLCV_COLUMNS: Final[list[str]] = [
@@ -69,7 +64,7 @@ _TF_MS: Final[dict[str, int]] = {
 
 def _load_services_config() -> dict:
     """Load ``config/services.yaml`` and return the ``market_data`` section."""
-    path = _CONFIG_DIR / "services.yaml"
+    path = CONFIG_DIR / "services.yaml"
     with open(path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
     return cfg.get("market_data", {})
@@ -77,7 +72,7 @@ def _load_services_config() -> dict:
 
 def _load_universe() -> list[str]:
     """Return the list of trading pairs from ``config/universe.json``."""
-    path = _CONFIG_DIR / "universe.json"
+    path = CONFIG_DIR / "universe.json"
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     pairs: list[str] = data.get("pairs", [])
@@ -88,7 +83,7 @@ def _load_universe() -> list[str]:
 
 def _load_timeframes() -> list[str]:
     """Return configured timeframes from ``config/risk_profile.json``."""
-    path = _CONFIG_DIR / "risk_profile.json"
+    path = CONFIG_DIR / "risk_profile.json"
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     return data.get("timeframes", ["4h", "1d"])
@@ -130,7 +125,7 @@ class MarketDataFetcher:
         # Cache directory (relative paths resolved against project root)
         raw_cache = cache_dir or cfg.get("cache_dir", "data/raw")
         self._cache_dir = (
-            Path(raw_cache) if Path(raw_cache).is_absolute() else _PROJECT_ROOT / raw_cache
+            Path(raw_cache) if Path(raw_cache).is_absolute() else PROJECT_ROOT / raw_cache
         )
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 

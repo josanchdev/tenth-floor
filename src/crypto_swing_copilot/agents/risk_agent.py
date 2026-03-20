@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
-from pathlib import Path
 
 from langfuse import observe
 
@@ -30,8 +30,8 @@ from crypto_swing_copilot.agents.base import (
     call_gemini,
     load_agent_config,
     load_risk_profile,
-    load_spot_config,
 )
+from crypto_swing_copilot.config import PROJECT_ROOT
 from crypto_swing_copilot.data.models import (
     PlaybookEntry,
     PlaybookVerdict,
@@ -39,8 +39,6 @@ from crypto_swing_copilot.data.models import (
 )
 
 logger = logging.getLogger(__name__)
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 _SYSTEM_PROMPT = """\
 You are RiskAgent, the final risk gatekeeper for a crypto spot trading system.
@@ -63,7 +61,6 @@ class RiskAgent:
     def __init__(self) -> None:
         self._config = load_agent_config("risk_agent")
         self._risk_profile = load_risk_profile()
-        self._spot_config = load_spot_config()
         logger.info("RiskAgent initialised  model=%s", self._config.get("model"))
 
     @observe(name="risk_agent")
@@ -208,7 +205,6 @@ class RiskAgent:
             )
 
             # Parse reasoning
-            import re
             cleaned = raw.strip()
             cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
             cleaned = re.sub(r"\n?```\s*$", "", cleaned)
@@ -232,7 +228,7 @@ class RiskAgent:
     @staticmethod
     def _load_portfolio() -> dict:
         """Load portfolio state from ``positions.json``."""
-        path = _PROJECT_ROOT / "positions.json"
+        path = PROJECT_ROOT / "positions.json"
         if not path.exists():
             logger.warning("positions.json not found — using empty portfolio")
             return {
