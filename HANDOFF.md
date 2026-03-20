@@ -1,95 +1,138 @@
 # Handoff Note — V2 Pivot Progress
 
-Generated: 2026-03-20
+Generated: 2026-03-21
 
 ## 1. What Is Complete
 
-### Committed — Task 12: SQLite signal logger + outcome checker (commit `cc4a85d`)
+### Task 13 — Discord webhook notifier (commit `e3fbd5c`)
 
-Two new components for signal persistence and outcome tracking:
+- **`notifications/discord_notifier.py`** — `DiscordNotifier.post(entries, open_count, report_date)`. One consolidated embed per daily run. Each signal is one embed field with multi-line value (mobile-friendly). Zero-signal days post "No actionable setups today" (never go silent). Uses `requests` (existing dependency). `DISCORD_WEBHOOK_URL` from env; no-op with warning if unset.
+- **`notifications/__init__.py`** — package init
+- **`tests/test_discord_notifier.py`** — 12 tests: embed construction (5), webhook posting (7)
 
-- **`db/schema.sql`** — updated: status default `PENDING` (was `OPEN`), new `entered_at` column for PENDING → OPEN transition timestamp
-- **`db/signal_logger.py`** — `SignalLogger` class: `log()` inserts approved signals with status PENDING, `open_signal_count()` counts PENDING+OPEN, `get_active_signals()` returns signals for outcome checking, `update_signal()` with column-whitelist safety. Signal ID format: `{pair}_{date}_{uuid[:8]}`
-- **`check_outcomes.py`** — standalone script (no LLM calls). Walks 4h candles chronologically for each active signal. PENDING → OPEN when candle low enters entry zone. SL/TP detection on candle high/low (SL-first on same-candle ambiguity). MAE/MFE tracked during walk. 14-day expiry. Groups signals by pair to minimise fetches. `--dry-run` flag for preview.
-- **`tests/test_signal_logger.py`** — 8 tests: schema init, log/skip, counts, updates, column-whitelist rejection, Langfuse trace
-- **`tests/test_check_outcomes.py`** — 11 tests: PENDING→OPEN, TP hit, SL hit, same-candle SL wins, entry+TP in same walk, MAE/MFE, pending expiry, open expiry, no-candles edge case, full DB integration
+### Orchestrator — `main.py` (commit `ce5b90b`)
 
-### Committed — Task 11.5: Local LLM backend (commit `610ad9c`)
+Full daily pipeline wiring:
+1. `MarketDataFetcher.fetch_universe()` — OHLCV for all pairs × timeframes
+2. `SentimentFetcher.fetch_snapshot()` — F&G + RSS (once, shared)
+3. `SnapshotBuilder.build_universe()` — PairSnapshot per pair × timeframe
+4. Per snapshot: `QuantAgent → StrategyAgent` (SentimentAgent runs once)
+5. `RiskAgent.run()` — filter + conviction tiers
+6. `SignalLogger.log()` + `DiscordNotifier.post()`
 
-Full migration from Google Gemini to local open-source inference:
+CLI: `python -m crypto_swing_copilot.main [PAIRS...] [--dry-run] [--log-level]`
 
-- **`agents/base.py`** — `call_gemini()` → `call_llm()` with provider-agnostic routing via OpenAI-compatible API. New `clean_json_response()` strips Qwen3 `<think>` blocks and code fences. Removed `google-genai` dependency. `load_agent_config()` now merges `defaults` section from `models.yaml` with per-agent overrides. `LLM_BASE_URL` env var override.
-- **All 4 agents** — updated imports, significantly improved prompts with explicit examples, structured scoring criteria, Qwen3-compatible formatting
-- **`config/models.yaml`** — new `defaults` section with `provider: openai`, `base_url`, `model: qwen3-32b`
-- **`pyproject.toml`** — `google-genai` → `openai`
-- **`.env.example`** — replaced `GOOGLE_API_KEY` with `LLM_BASE_URL` and `OPENAI_API_KEY` docs
-- **`tests/test_agents.py`** — all mock targets updated; added 7 new tests for base utilities
+- **`tests/test_main.py`** — 11 tests: pipeline flow (8), CLI parsing (3)
 
-### Committed — Task 11 (commit `be4c7fb`)
+### Langfuse observability fix (commit `8dea51c`)
 
-Full V2 pivot of the agent layer and its contracts:
+- `agents/base.py` — `from openai import OpenAI` → `from langfuse.openai import OpenAI`. Removed `@observe` on `call_llm()`. The wrapper auto-instruments every LLM call as a Langfuse generation event.
 
-- **`config/risk_profile.json`** — removed V1 EUR budget fields; added `conviction_tiers`
-- **`data/models.py`** — `PlaybookEntry` now has `confidence_score`, `conviction`, `suggested_risk_pct`
-- **`agents/risk_agent.py`** — V2 rewrite: `run()` takes `list[tuple[SetupProposal, float]]`
-- **`positions.json`** — deleted
+### Runtime fixes from first dry run (commit `b50ec0d`)
 
-### Committed — Pre-Task 11 quality fixes (commit `1e60a93`)
+- **`features/ta_calculator.py`** — pandas_ta 0.4.71b + pandas 3.x + Python 3.13 compatibility: disable numba JIT (`NUMBA_DISABLE_JIT=1`) and patch `numpy.isnan` before pandas_ta import so `true_range.py` can handle pandas Series objects.
+- **`config/models.yaml`** — model name updated to `Qwen/Qwen3-32B-AWQ` (matches vLLM's served model ID when using the AWQ quantized variant).
+- **`agents/risk_agent.py`** — `_enrich_with_llm_reasoning()` now handles dict, list, and malformed LLM responses instead of crashing on unexpected JSON shape.
+- **`main.py`** — SentimentAgent call wrapped in try/except for graceful abort if LLM is down.
 
-- `config.py` — central path resolver; all consumers updated
-- `PlaybookVerdict.REDUCED` removed from `models.py`
-- `db/schema.sql` created with VISION.md DDL
+### Task 12 — SQLite signal logger + outcome checker (commit `cc4a85d`)
 
-### Documentation commits
+- **`db/signal_logger.py`** — `SignalLogger`: `log()`, `open_signal_count()`, `get_active_signals()`, `update_signal()` with column whitelist
+- **`check_outcomes.py`** — standalone candle-walk script. PENDING→OPEN→HIT_TP/HIT_SL/EXPIRED. MAE/MFE tracking. 14-day expiry. `--dry-run` flag.
+- **`tests/test_signal_logger.py`** — 8 tests
+- **`tests/test_check_outcomes.py`** — 11 tests
 
-- `65d06d7` — docs: update architecture and handoff for Task 12
-- `c6d3205` — docs: add V2 documentation — architecture, signals, known limitations
+### Task 11.5 — Local LLM backend (commit `610ad9c`)
 
-### Test coverage
+- `agents/base.py` — `call_llm()` with provider-agnostic OpenAI-compatible routing, `clean_json_response()` for Qwen3 `<think>` blocks
+- All 4 agents — improved prompts for Qwen3
+- `config/models.yaml` — defaults section with provider/base_url/model
+- `pyproject.toml` — `google-genai` → `openai`
 
-70 tests passing across 6 files. All mocked — no network calls, no LLM server required.
+### Task 11 — V2 pivot (commit `be4c7fb`)
+
+- `config/risk_profile.json` — conviction tiers, removed EUR budget fields
+- `data/models.py` — `PlaybookEntry` with confidence_score, conviction, suggested_risk_pct
+- `agents/risk_agent.py` — V2 rewrite
+- `positions.json` — deleted
+
+### Pre-Task 11 quality fixes (commit `1e60a93`)
+
+- `config.py` — central path resolver
+- `PlaybookVerdict.REDUCED` removed
+- `db/schema.sql` created
 
 ---
 
 ## 2. Uncommitted Changes
 
-**`agents/base.py`** — Langfuse observability fix (in progress):
-- Changed `from openai import OpenAI` → `from langfuse.openai import OpenAI`
-- Removed `@observe(name="llm_call")` decorator from `call_llm()`
-- The `langfuse.openai.OpenAI` wrapper auto-instruments every `create()` call as a Langfuse **generation** event (captures tokens, model, messages, latency)
-- Agent-level `@observe` decorators on `run()` methods remain — gives two-level traces: agent span → LLM generation
-- 70/70 tests still passing
-- **This should be committed before starting Task 13**
+None. Working tree is clean.
 
 ---
 
-## 3. Commit History
+## 3. First Dry Run Results (2026-03-21)
+
+Pipeline ran end-to-end successfully against BTCUSDT with local Qwen3-32B-AWQ:
+
+| Step | Result |
+|------|--------|
+| OHLCV | 500 bars fetched (4h + 1d), cached as Parquet |
+| Sentiment | F&G = 11 (Extreme Fear), 10 CoinDesk headlines |
+| Snapshots | 2 built (4h + 1d), 13 TA indicators each |
+| SentimentAgent | bias=extreme_fear |
+| QuantAgent 4h | downtrend, confidence=0.68, 4 signals |
+| QuantAgent 1d | downtrend, confidence=0.62, 3 signals |
+| StrategyAgent | Both timeframes → action=skip, direction=neutral |
+| RiskAgent | 2 rejected ("Strategy action is skip") |
+| **Result** | **0 approved — correct for extreme fear / downtrend** |
+
+Total runtime: ~30 seconds (6 LLM calls to local Qwen3-32B-AWQ on RTX 3090).
+
+---
+
+## 4. Commit History
 
 ```
+b50ec0d fix: pandas_ta compat, model name, RiskAgent parsing, pipeline resilience
+ce5b90b feat: daily pipeline orchestrator (main.py)
+e3fbd5c feat: Discord webhook notifier (Task 13)
+8dea51c fix: use langfuse.openai.OpenAI wrapper for auto-instrumented LLM tracing
 65d06d7 docs: update architecture and handoff for Task 12
-cc4a85d feat: SQLite signal logger + candle-walk outcome checker (Task 12)
-610ad9c feat: switch LLM backend to local Qwen3 32B via vLLM              ← Task 11.5
+cc4a85d feat: SQLite signal logger + candle-walk outcome checker (Task 12)      ← Task 12
+610ad9c feat: switch LLM backend to local Qwen3 32B via vLLM                    ← Task 11.5
 c6d3205 docs: add V2 documentation — architecture, signals, known limitations
-be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers ← Task 11
+be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers       ← Task 11
 1e60a93 fix: surgical code quality fixes pre-V2 pivot
 3f94ca7 docs: add VISION.md — V2 Discord Signal Provider brief
 ```
 
 ---
 
-## 4. What Is Next
+## 5. Test Coverage
 
-### Commit the Langfuse fix
+93 tests passing across 8 files. All mocked — no network calls, no LLM server required.
 
-The `base.py` change (§2 above) is tested and ready. Commit it before proceeding.
+| File | Tests | Covers |
+|------|-------|--------|
+| test_agents.py | 16 | All 4 agents + base utilities |
+| test_check_outcomes.py | 11 | Outcome checker candle walk |
+| test_discord_notifier.py | 12 | Embed construction + webhook posting |
+| test_main.py | 11 | Pipeline flow + CLI parsing |
+| test_pair_snapshot.py | 11 | Snapshot builder |
+| test_sentiment.py | 9 | F&G + RSS fetching |
+| test_signal_logger.py | 8 | SQLite logger |
+| test_ta_calculator.py | 15 | TA indicator computation |
 
-### Task 13 — Discord webhook notifier
+---
 
-Create `src/crypto_swing_copilot/notifications/discord_notifier.py`:
-- `DiscordNotifier.post(entries: list[PlaybookEntry], open_count: int)` — posts one embed
-- Embed spec: see `docs/signals.md` and `VISION.md §Discord Embed Spec`
-- `DISCORD_WEBHOOK_URL` from env; no-op with warning if unset
-- 1-second sleep between sends if ever extended to multiple embeds
+## 6. What Is Next
+
+### First real run (remove --dry-run)
+
+The pipeline is ready. Run without `--dry-run` to:
+- Log signals to `data/playbook_history.db`
+- Post the consolidated embed to Discord via webhook
+- Validate end-to-end in production
 
 ### Task 14 — Admin dashboard
 
@@ -97,40 +140,46 @@ Create `src/crypto_swing_copilot/dashboard/app.py` (Streamlit):
 - Signal history table (sortable by date, pair, conviction)
 - Performance summary (win rate by tier once 30+ closed trades exist)
 
-### Orchestrator (`main.py`)
+### V2 completion checklist (from VISION.md)
 
-Create `src/crypto_swing_copilot/main.py` after Task 13:
-- Fetch OHLCV for all universe pairs
-- Fetch sentiment snapshot (once, shared)
-- For each pair: `SnapshotBuilder → QuantAgent → SentimentAgent → StrategyAgent`
-- Collect `(SetupProposal, confidence)` pairs → `RiskAgent`
-- `SignalLogger.log()` approved entries
-- `DiscordNotifier.post()` consolidated embed
+- [x] Tasks 11–13 committed and tested
+- [ ] Task 14 — admin dashboard
+- [ ] At least one real signal posted to Discord
+- [ ] SQLite logging confirmed working
+- V2.1 begins when 30+ closed trades exist in the DB
 
 ---
 
-## 5. Decisions Made Not in VISION.md
+## 7. Decisions Made Not in VISION.md
 
-1. **Local LLM inference** — switched from Google Gemini to Qwen3 32B via vLLM. Provider-agnostic `call_llm()` supports any OpenAI-compatible API. Config-only model switching.
+1. **Local LLM inference** — Google Gemini → Qwen3 32B AWQ via vLLM. Provider-agnostic `call_llm()` supports any OpenAI-compatible API. Config-only model switching.
 
-2. **Langfuse integration uses `langfuse.openai.OpenAI`** — not `@observe` on the LLM call function. The OpenAI wrapper auto-captures token usage, model name, prompt content, and latency as a generation event. Agent-level `@observe` decorators remain for parent spans, giving two-level tracing.
+2. **Qwen3-32B-AWQ for RTX 3090** — full Qwen3-32B doesn't fit in 24GB VRAM. AWQ 4-bit quantization (~18GB) runs well. vLLM serves it as `Qwen/Qwen3-32B-AWQ` with `--max-model-len 4096 --gpu-memory-utilization 0.90`.
 
-3. **Signal lifecycle: PENDING → OPEN** — signals start as PENDING; only flip to OPEN when price enters the entry zone. This prevents counting unfilled signals as winners.
+3. **Langfuse integration uses `langfuse.openai.OpenAI`** — not `@observe` on the LLM call function. The OpenAI wrapper auto-captures token usage, model name, prompt content, and latency. Agent-level `@observe` decorators remain for parent spans.
 
-4. **Outcome tracking via candle walk** — `check_outcomes.py` walks 4h candles chronologically, checking high/low (not close). First condition met (TP or SL) wins. Conservative same-candle assumption (SL first).
+4. **Signal lifecycle: PENDING → OPEN** — signals start as PENDING; flip to OPEN when price enters entry zone. Prevents counting unfilled signals as winners.
 
-5. **MAE/MFE tracked during candle walk** — recorded per-signal during outcome checking, not as a separate pass. Gives Task 15 (performance analytics) its data for free.
+5. **Outcome tracking via candle walk** — `check_outcomes.py` walks 4h candles chronologically, checking high/low (not close). SL-first on same-candle ambiguity (conservative).
 
-6. **14-day expiry** — swing trades unresolved after 14 calendar days are marked EXPIRED. Aligns with weekly swing timeframe.
+6. **MAE/MFE tracked during candle walk** — recorded per-signal during outcome checking, not as a separate pass.
 
-7. **`entered_at` column added to schema** — not in original VISION.md DDL. Records the timestamp when PENDING flips to OPEN (candle entered entry zone). Needed for accurate signal duration tracking.
+7. **14-day expiry** — unresolved swing trades marked EXPIRED after 14 calendar days.
 
-8. **`update_signal()` uses column whitelist** — only `status`, `entered_at`, `outcome_price`, `outcome_date`, `max_adverse_excursion`, `max_favorable_excursion` can be updated. Prevents accidental modification of immutable signal fields.
+8. **`entered_at` column added to schema** — not in original VISION.md DDL. Records when PENDING flips to OPEN.
 
-9. **Outcome checker groups by pair** — fetches candles once per pair, then processes all signals for that pair. Minimises Binance API calls when multiple signals exist for the same pair.
+9. **`update_signal()` uses column whitelist** — only mutable fields can be updated.
 
-10. **`max_open_positions` removed from `risk_profile.json`** — V2 is a signal provider, not a portfolio manager.
+10. **Outcome checker groups by pair** — fetches candles once per pair, minimises Binance API calls.
 
-11. **`RiskAgent.run()` interface is `list[tuple[SetupProposal, float]]`** — explicit, ordering-safe.
+11. **`max_open_positions` removed from `risk_profile.json`** — V2 is a signal provider, not a portfolio manager.
 
-12. **VISION.md locked files section is outdated** — all four agent files have been unlocked and rewritten for Task 11.5 (local LLM). The lock is no longer in effect.
+12. **`RiskAgent.run()` interface is `list[tuple[SetupProposal, float]]`** — explicit, ordering-safe.
+
+13. **VISION.md locked files section is outdated** — all four agent files have been unlocked and rewritten for Task 11.5.
+
+14. **pandas_ta requires compatibility patches on Python 3.13 + pandas 3.x** — numba JIT disabled, `numpy.isnan` patched before import. Applied in `ta_calculator.py`.
+
+15. **Discord embed: one field per signal** — multi-line value with Entry/Stop/Target/RR/Rationale. Zero-signal days always post (never go silent). Confirmed as mobile-friendly.
+
+16. **Notifier is DB-unaware** — `DiscordNotifier.post()` receives `open_count` from caller; it never touches SQLite directly.
