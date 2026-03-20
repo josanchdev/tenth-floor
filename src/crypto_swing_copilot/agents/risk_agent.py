@@ -206,11 +206,20 @@ class RiskAgent:
                 base_url=self._config.get("base_url", "http://localhost:8000/v1"),
             )
 
-            # Parse reasoning
+            # Parse reasoning — handle both list and single-object responses
             cleaned = clean_json_response(raw)
             data = json.loads(cleaned)
 
-            reasoning_map = {item["symbol"]: item["verdict_reasoning"] for item in data}
+            if isinstance(data, dict):
+                data = [data]
+            if not isinstance(data, list):
+                logger.warning("LLM returned unexpected type %s — skipping enrichment", type(data).__name__)
+                return entries
+
+            reasoning_map: dict[str, str] = {}
+            for item in data:
+                if isinstance(item, dict) and "symbol" in item and "verdict_reasoning" in item:
+                    reasoning_map[item["symbol"]] = item["verdict_reasoning"]
 
             enriched = []
             for e in entries:

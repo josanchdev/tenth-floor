@@ -27,10 +27,38 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from typing import Any
 
+# pandas-ta uses numba @njit for SMA which is incompatible with
+# pandas 3.x + Python 3.13.  Disable JIT to use the pure-Python fallback.
+os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
+
+# pandas-ta 0.4.71b + pandas 3.x: ``from numpy import isnan`` in
+# ``true_range.py`` chokes on pandas Series objects.  We must patch
+# numpy.isnan *before* pandas_ta imports it, so the ``from numpy import
+# isnan`` statement picks up the safe wrapper.
+import numpy as np
+
+_orig_np_isnan = np.isnan
+
+
+def _safe_isnan(x):  # type: ignore[no-untyped-def]
+    if hasattr(x, "to_numpy"):
+        return _orig_np_isnan(x.to_numpy(dtype=float, na_value=np.nan))
+    arr = np.asarray(x)
+    if arr.dtype.kind not in ("f", "c"):  # not float/complex
+        arr = arr.astype(float)
+    return _orig_np_isnan(arr)
+
+
+np.isnan = _safe_isnan
+
 import pandas as pd
-import pandas_ta as ta  # noqa: F401 — attaches .ta accessor to DataFrame
+import pandas_ta as ta  # noqa: F401, E402 — attaches .ta accessor to DataFrame
+
+# Restore original numpy.isnan so other code is unaffected.
+np.isnan = _orig_np_isnan
 
 from crypto_swing_copilot.data.models import TAIndicators
 

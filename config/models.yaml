@@ -11,7 +11,7 @@
 defaults:
   provider: openai
   base_url: http://localhost:8000/v1    # vLLM server
-  model: qwen3-32b
+  model: Qwen/Qwen3-32B-AWQ
 
 quant_agent:
   temperature: 0.1          # Low temp → deterministic regime classification

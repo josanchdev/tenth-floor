@@ -86,12 +86,16 @@ def run_pipeline(
     strategy_agent = StrategyAgent()
 
     # SentimentAgent runs once on the shared snapshot
-    sentiment_signal = sentiment_agent.run(sentiment_snapshot)
-    logger.info(
-        "SentimentAgent done  bias=%s  fg=%d",
-        sentiment_signal.bias.value,
-        sentiment_signal.fear_greed_value,
-    )
+    try:
+        sentiment_signal = sentiment_agent.run(sentiment_snapshot)
+        logger.info(
+            "SentimentAgent done  bias=%s  fg=%d",
+            sentiment_signal.bias.value,
+            sentiment_signal.fear_greed_value,
+        )
+    except Exception:
+        logger.exception("SentimentAgent failed — aborting pipeline")
+        return []
 
     proposals: list[tuple[SetupProposal, float]] = []
 
