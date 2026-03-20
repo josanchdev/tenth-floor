@@ -1,10 +1,18 @@
 -- The Tenth Floor AI — Signal History Schema
 -- Runtime location: data/playbook_history.db
 -- This file is version-controlled; the .db file is git-ignored.
+--
+-- Status lifecycle: PENDING → OPEN → HIT_TP | HIT_SL | EXPIRED
+--   PENDING: Signal published, price has not entered entry zone yet.
+--   OPEN:    Price entered entry zone — signal is active.
+--   HIT_TP:  Candle high reached take-profit.
+--   HIT_SL:  Candle low reached stop-loss (assumed first on same-candle ambiguity).
+--   EXPIRED: 14 calendar days with no TP or SL hit.
 
 CREATE TABLE IF NOT EXISTS signals (
     signal_id                TEXT PRIMARY KEY,
     created_at               TEXT NOT NULL,
+    entered_at               TEXT,              -- when PENDING → OPEN (candle entered entry zone)
     report_date              TEXT NOT NULL,
     pair                     TEXT NOT NULL,
     timeframe                TEXT NOT NULL,
@@ -18,7 +26,7 @@ CREATE TABLE IF NOT EXISTS signals (
     reward_risk              REAL NOT NULL,
     suggested_risk_pct       REAL NOT NULL,
     strategy_rationale       TEXT,
-    status                   TEXT NOT NULL DEFAULT 'OPEN',
+    status                   TEXT NOT NULL DEFAULT 'PENDING',
     outcome_price            REAL,
     outcome_date             TEXT,
     max_adverse_excursion    REAL,
