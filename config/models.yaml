@@ -15,7 +15,7 @@ defaults:
 
 quant_agent:
   temperature: 0.1          # Low temp → deterministic regime classification
-  max_output_tokens: 1024
+  max_output_tokens: 512    # Output is ~150 tokens of JSON; keep low to fit 4096 context
 
 sentiment_agent:
   temperature: 0.3          # Slightly higher → richer narrative
@@ -23,7 +23,7 @@ sentiment_agent:
 
 strategy_agent:
   temperature: 0.1          # Low temp → consistent structured JSON output
-  max_output_tokens: 2048
+  max_output_tokens: 512    # Output is ~200 tokens of JSON; keep low to fit 4096 context
 
 risk_agent:
   temperature: 0.0          # Zero temp → strict rule application

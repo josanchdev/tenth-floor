@@ -149,7 +149,15 @@ class RiskAgent:
         if proposal.action.value in ("skip", "hold"):
             return PlaybookVerdict.REJECTED, f"Strategy action is {proposal.action.value}"
 
-        # Rule 3: Confidence too low to publish
+        # Rule 3: R:R below configured minimum
+        min_rr = self._risk_profile.get("take_profit_rr_ratio", 2.0)
+        if proposal.reward_risk_ratio < min_rr:
+            return (
+                PlaybookVerdict.REJECTED,
+                f"R:R {proposal.reward_risk_ratio:.2f} below minimum {min_rr:.1f} – skipping",
+            )
+
+        # Rule 4: Confidence too low to publish
         min_confidence = self._risk_profile.get("min_setup_confidence", 0.65)
         if confidence < min_confidence:
             return (

@@ -113,7 +113,7 @@ class DiscordNotifier:
             f"Rationale: {entry.strategy_rationale}"
         )
         return {
-            "name": f"{entry.symbol} \u00b7 {entry.direction.value.upper()} \u00b7 {entry.conviction.upper()}",
+            "name": f"{entry.symbol} {entry.timeframe.upper()} \u00b7 {entry.direction.value.upper()} \u00b7 {entry.conviction.upper()}",
             "value": value,
             "inline": False,
         }

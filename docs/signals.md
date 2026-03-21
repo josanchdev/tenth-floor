@@ -11,8 +11,11 @@ This document defines exactly what a signal is, how it is produced, and how it i
 | Confidence | Tier | Suggested risk |
 |---|---|---|
 | ≥ 0.80 | `high` | 2% of portfolio |
-| ≥ 0.65 | `standard` | 1% of portfolio |
-| < 0.65 | — | Signal dropped, not published |
+| ≥ 0.55 | `standard` | 1% of portfolio |
+| < 0.55 | — | Signal dropped, not published |
+
+> Thresholds lowered from 0.65 to 0.55 pre-calibration. Will tighten
+> at V2.1 when 30+ closed trades provide real data for calibration.
 
 The confidence score is LLM-generated (Qwen3 32B) from indicator consensus. It is a policy input, not a statistically calibrated probability. See [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md#2-quantagent-confidence-score-is-not-statistically-calibrated).
 
@@ -51,9 +54,15 @@ Price levels are computed by `StrategyAgent._compute_price_levels()` before the 
 ```
 entry_zone_low   = price × 0.995          # ±0.5% around spot (see KNOWN_LIMITATIONS §1)
 entry_zone_high  = price × 1.005
-stop_loss        = entry_low − (ATR_14 × stop_loss_atr_multiplier)
-take_profit      = entry_high + (SL_distance × take_profit_rr_ratio)
+entry_mid        = (entry_low + entry_high) / 2
+stop_loss        = entry_mid − (ATR_14 × stop_loss_atr_multiplier)
+take_profit      = entry_mid + (actual_risk × take_profit_rr_ratio)
+                                          # actual_risk = entry_mid − stop_loss (after rounding)
 ```
+
+The midpoint-based computation ensures R:R is symmetric and always
+meets the configured minimum (2.0). TP is derived from the actual
+risk after SL rounding, not from the raw ATR distance.
 
 Parameters are set in `config/risk_profile.json`:
 
@@ -73,7 +82,8 @@ Parameters are set in `config/risk_profile.json`:
 | `"Spot only – no shorting"` | `direction == SHORT` |
 | `"Strategy action is skip"` | `action == SKIP` |
 | `"Strategy action is hold"` | `action == HOLD` |
-| `"Confidence {x} below minimum {0.65} – skipping"` | `confidence < min_setup_confidence` |
+| `"R:R {x} below minimum {2.0} – skipping"` | `reward_risk_ratio < take_profit_rr_ratio` |
+| `"Confidence {x} below minimum {0.55} – skipping"` | `confidence < min_setup_confidence` |
 
 ---
 
@@ -86,8 +96,8 @@ Title:   🔟 THE TENTH FLOOR — {YYYY-MM-DD}
 Color:   0x00ff88  (green)  if any approved signals
          0x888888  (grey)   if no approved signals
 
-Per approved signal:
-  Field: "{pair} · LONG · {CONVICTION TIER}"
+Per approved signal (one per pair — deduped):
+  Field: "{pair} {TF} · LONG · {CONVICTION TIER}"
   Value: "Entry: {entry_low} – {entry_high}"
          "Stop: {stop_loss}  |  Target: {take_profit}"
          "R:R: {reward_risk}  ·  Risk: {suggested_risk_pct × 100}%"
@@ -96,13 +106,14 @@ Per approved signal:
 Footer: "Open signals in DB: {n}  |  Powered by The Tenth Floor AI"
 ```
 
-Implemented in Task 13.
+Implemented in `notifications/discord_notifier.py`.
 
 ---
 
 ## SQLite Schema
 
-Approved signals are persisted to `data/playbook_history.db` (git-ignored). The DDL lives in `db/schema.sql`.
+Approved signals are persisted to `data/playbook_history.db` (git-
+ignored). The DDL lives in `db/schema.sql`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS signals (
@@ -127,17 +138,43 @@ CREATE TABLE IF NOT EXISTS signals (
     outcome_date             TEXT,
     max_adverse_excursion    REAL,
     max_favorable_excursion  REAL,
-    langfuse_trace_id        TEXT
+    langfuse_trace_id        TEXT,
+
+    UNIQUE(pair, timeframe, report_date)
 );
 ```
 
-`status` lifecycle: `PENDING` → `OPEN` → `HIT_TP` | `HIT_SL` | `EXPIRED`.
+The `UNIQUE` constraint prevents duplicate signals if the pipeline
+runs twice on the same day. `INSERT OR IGNORE` silently skips
+duplicates.
 
-- `PENDING`: Signal published but price has not entered the entry zone yet.
-- `OPEN`: A 4h candle low dipped into the entry zone — signal is active.
-- `HIT_TP` / `HIT_SL`: Candle high/low reached TP or SL (chronological order, first hit wins; same-candle ambiguity assumes SL first — conservative).
-- `EXPIRED`: 14 calendar days with no TP or SL hit.
+### Signal Lifecycle
 
-Outcome tracking runs via `check_outcomes.py`, a standalone script that walks 4h candles chronologically for each open signal. Records MAE (max adverse excursion) and MFE (max favourable excursion) along the way.
+```
+PENDING ──▶ OPEN ──▶ HIT_TP  (target reached)
+                 ──▶ HIT_SL  (stop hit)
+                 ──▶ EXPIRED (14 days, no resolution)
+```
 
-Implemented in Task 12.
+- **PENDING**: Signal published but price has not entered the entry
+  zone yet.
+- **OPEN**: A 4h candle low dipped into the entry zone — signal is
+  active. `entered_at` timestamp is recorded.
+- **HIT_TP / HIT_SL**: Candle high/low reached TP or SL
+  (chronological order, first hit wins; same-candle ambiguity assumes
+  SL first — conservative).
+- **EXPIRED**: 14 calendar days with no TP or SL hit.
+
+### MAE / MFE Tracking
+
+During the candle walk, the outcome checker records:
+
+- **MAE** (Max Adverse Excursion): lowest low since entry — measures
+  worst drawdown experienced.
+- **MFE** (Max Favourable Excursion): highest high since entry —
+  measures best unrealised gain.
+
+These are essential for calibration at V2.1 (30+ closed trades).
+
+Outcome tracking runs via `check_outcomes.py`. See
+[deployment.md](deployment.md) for scheduling.

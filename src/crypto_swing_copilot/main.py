@@ -33,9 +33,46 @@ from crypto_swing_copilot.db.signal_logger import SignalLogger
 from crypto_swing_copilot.features.pair_snapshot import SnapshotBuilder
 from crypto_swing_copilot.notifications.discord_notifier import DiscordNotifier
 
+try:
+    from langfuse.decorators import langfuse_context, observe as lf_observe
+except ImportError:  # pragma: no cover
+    langfuse_context = None  # type: ignore[assignment]
+
+    def lf_observe(**_kw):  # type: ignore[misc]
+        def _noop(fn):  # type: ignore[no-untyped-def]
+            return fn
+        return _noop
+
 logger = logging.getLogger(__name__)
 
+# Timeframe preference for tie-breaking (higher index = preferred)
+_TF_PREFERENCE = {"4h": 0, "1d": 1}
 
+
+def _dedup_per_pair(approved: list[PlaybookEntry]) -> list[PlaybookEntry]:
+    """Keep one signal per pair — highest R:R wins, prefer 1d on tie."""
+    best: dict[str, PlaybookEntry] = {}
+    for entry in approved:
+        existing = best.get(entry.symbol)
+        if existing is None:
+            best[entry.symbol] = entry
+            continue
+        # Higher R:R wins
+        if entry.reward_risk_ratio > existing.reward_risk_ratio:
+            best[entry.symbol] = entry
+        elif entry.reward_risk_ratio == existing.reward_risk_ratio:
+            # Tie: prefer longer timeframe (1d > 4h)
+            if _TF_PREFERENCE.get(entry.timeframe, 0) > _TF_PREFERENCE.get(existing.timeframe, 0):
+                best[entry.symbol] = entry
+
+    deduped = list(best.values())
+    dropped = len(approved) - len(deduped)
+    if dropped:
+        logger.info("Dedup: kept %d signals, dropped %d duplicate pair(s)", len(deduped), dropped)
+    return deduped
+
+
+@lf_observe(name="daily_pipeline")
 def run_pipeline(
     pairs: list[str] | None = None,
     *,
@@ -137,6 +174,11 @@ def run_pipeline(
         len(entries) - len(approved),
     )
 
+    # ── 5b. Dedup: one signal per pair per day ───────────────────────
+    # When both timeframes approve the same pair, keep the higher R:R.
+    # On tie, prefer 1d (better alignment with swing trading horizon).
+    approved = _dedup_per_pair(approved)
+
     # ── 6. Persist + notify ─────────────────────────────────────────
     logger.info("Step 6/6: Logging signals and posting to Discord")
 
@@ -152,14 +194,20 @@ def run_pipeline(
         return entries
 
     # Log to SQLite
-    signal_logger = SignalLogger()
-    for entry in approved:
-        signal_id = signal_logger.log(entry)
-        if signal_id:
-            logger.info("Logged signal %s", signal_id)
+    trace_id = None
+    if langfuse_context is not None:
+        try:
+            trace_id = langfuse_context.get_current_trace_id()
+        except Exception:
+            pass
 
-    open_count = signal_logger.open_signal_count()
-    signal_logger.close()
+    with SignalLogger() as signal_logger:
+        for entry in approved:
+            signal_id = signal_logger.log(entry, langfuse_trace_id=trace_id)
+            if signal_id:
+                logger.info("Logged signal %s", signal_id)
+
+        open_count = signal_logger.open_signal_count()
 
     # Post to Discord
     notifier = DiscordNotifier()

@@ -291,6 +291,24 @@ class TestRiskAgent:
         assert entries[0].conviction == "none"
         assert entries[0].suggested_risk_pct == 0.0
 
+    def test_reject_low_rr(self) -> None:
+        """R:R below configured minimum (2.0) → REJECTED."""
+        low_rr_proposal = SetupProposal(
+            symbol="BTCUSDT", timeframe="4h",
+            direction=SignalDirection.LONG, action=SetupAction.BUY,
+            entry_zone_low=62000, entry_zone_high=62500,
+            stop_loss=60500, take_profit=63500,
+            reward_risk_ratio=1.5, rationale="Weak R:R.",
+        )
+
+        with patch("crypto_swing_copilot.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Low R:R."}]'):
+            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+            agent = RiskAgent()
+            entries = agent.run([(low_rr_proposal, 0.82)])
+
+        assert entries[0].verdict == PlaybookVerdict.REJECTED
+        assert "R:R" in entries[0].verdict_reasoning
+
 
 # ---------------------------------------------------------------------------
 # base.py utility tests

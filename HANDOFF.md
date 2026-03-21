@@ -4,6 +4,48 @@ Generated: 2026-03-21
 
 ## 1. What Is Complete
 
+### Post-V2 Audit Fixes (uncommitted)
+
+Comprehensive technical audit of the full pipeline after first live runs.
+Fixes 3 correctness bugs, adds 2 integrity safeguards, and 5 new tests.
+
+**T2 — R:R formula fix + enforcement gate**
+- `strategy_agent.py` — R:R computed symmetrically from entry midpoint. TP derived from actual risk after SL rounding. Guarantees R:R >= configured minimum (2.0).
+- `risk_agent.py` — New Rule 3: rejects proposals with R:R below `take_profit_rr_ratio`.
+
+**T3 — Duplicate signal protection**
+- `db/schema.sql` — `UNIQUE(pair, timeframe, report_date)` constraint.
+- `signal_logger.py` — `INSERT OR IGNORE` with `cursor.rowcount` detection. Re-running the pipeline on the same day is safe.
+
+**T4 — Context window fix**
+- `config/models.yaml` — `max_output_tokens` reduced to 512 for QuantAgent and StrategyAgent (output is ~150-200 tokens of JSON; keeps total under 4096 context window).
+
+**I3 — One signal per pair per day**
+- `main.py` — `_dedup_per_pair()`: when both timeframes approve the same pair, keeps the higher R:R. On tie, prefers 1d (swing trading alignment).
+
+**T5 — SignalLogger context manager**
+- `signal_logger.py` — implements `__enter__`/`__exit__`. `main.py` uses `with SignalLogger()`.
+
+**I8 — Langfuse trace ID wiring**
+- `main.py` — `run_pipeline()` wrapped with `@lf_observe(name="daily_pipeline")`. Trace ID captured via `langfuse_context.get_current_trace_id()` and passed to `signal_logger.log()`.
+
+**Discord timeframe label**
+- `discord_notifier.py` — embed field now shows `SOLUSDT 4H · LONG · STANDARD`.
+
+**StrategyAgent prompt — contrarian philosophy**
+- `strategy_agent.py` — system prompt rewritten: technicals drive entry, sentiment adjusts conviction (never gates it). Extreme fear + strong technicals = BUY.
+
+**Confidence threshold lowered**
+- `risk_profile.json` — `min_setup_confidence` lowered from 0.65 to 0.55. Pre-calibration adjustment — will tighten at V2.1 with 30+ closed trades.
+
+**Tests**: 112 passing (was 93). 5 new tests: 4 dedup + 1 R:R gate.
+
+### Task 14 — Admin dashboard (uncommitted)
+
+- **`dashboard/app.py`** — Streamlit admin UI. KPI cards (total/open/closed/win rate/avg R:R), signal history table (filterable by pair/status/conviction/timeframe/date), performance by conviction tier (requires 30+ closed trades), outcome distribution chart, MAE/MFE analysis.
+- **`dashboard/queries.py`** — Pure SQL + pandas. `load_signals()`, `compute_tier_stats()`. No Streamlit dependency — testable independently.
+- **`tests/test_dashboard.py`** — dashboard query tests.
+
 ### Task 13 — Discord webhook notifier (commit `e3fbd5c`)
 
 - **`notifications/discord_notifier.py`** — `DiscordNotifier.post(entries, open_count, report_date)`. One consolidated embed per daily run. Each signal is one embed field with multi-line value (mobile-friendly). Zero-signal days post "No actionable setups today" (never go silent). Uses `requests` (existing dependency). `DISCORD_WEBHOOK_URL` from env; no-op with warning if unset.
@@ -110,14 +152,15 @@ be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers    
 
 ## 5. Test Coverage
 
-93 tests passing across 8 files. All mocked — no network calls, no LLM server required.
+112 tests passing across 9 files. All mocked — no network calls, no LLM server required.
 
 | File | Tests | Covers |
 |------|-------|--------|
-| test_agents.py | 16 | All 4 agents + base utilities |
+| test_agents.py | 17 | All 4 agents + base utilities + R:R gate |
 | test_check_outcomes.py | 11 | Outcome checker candle walk |
-| test_discord_notifier.py | 12 | Embed construction + webhook posting |
-| test_main.py | 11 | Pipeline flow + CLI parsing |
+| test_dashboard.py | 5 | Dashboard queries |
+| test_discord_notifier.py | 12 | Embed construction + webhook posting (incl. timeframe label) |
+| test_main.py | 15 | Pipeline flow + CLI parsing + per-pair dedup (4 new) |
 | test_pair_snapshot.py | 11 | Snapshot builder |
 | test_sentiment.py | 9 | F&G + RSS fetching |
 | test_signal_logger.py | 8 | SQLite logger |
@@ -127,26 +170,21 @@ be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers    
 
 ## 6. What Is Next
 
-### First real run (remove --dry-run)
-
-The pipeline is ready. Run without `--dry-run` to:
-- Log signals to `data/playbook_history.db`
-- Post the consolidated embed to Discord via webhook
-- Validate end-to-end in production
-
-### Task 14 — Admin dashboard
-
-Create `src/crypto_swing_copilot/dashboard/app.py` (Streamlit):
-- Signal history table (sortable by date, pair, conviction)
-- Performance summary (win rate by tier once 30+ closed trades exist)
-
 ### V2 completion checklist (from VISION.md)
 
-- [x] Tasks 11–13 committed and tested
-- [ ] Task 14 — admin dashboard
-- [ ] At least one real signal posted to Discord
-- [ ] SQLite logging confirmed working
-- V2.1 begins when 30+ closed trades exist in the DB
+- [x] Tasks 11–14 committed and tested
+- [x] At least one real signal posted to Discord (SOLUSDT 4h + 1d, 2026-03-21)
+- [x] SQLite logging confirmed working
+- [x] Admin dashboard shows signal history
+- [ ] Accumulate 30+ closed trades for calibration → V2.1
+
+### Immediate priorities
+
+1. **Run pipeline daily** — manual runs from personal PC. Accumulate signals.
+2. **Run `check_outcomes.py` regularly** — resolve PENDING/OPEN signals against real candles.
+3. **Review Langfuse traces** — assess reasoning quality, iterate on prompts.
+4. **Move prompts to Langfuse Prompt Management** — edit prompts from UI without code changes.
+5. **At 30+ closed trades** — calibrate confidence thresholds, tighten `min_setup_confidence`.
 
 ---
 
@@ -183,3 +221,19 @@ Create `src/crypto_swing_copilot/dashboard/app.py` (Streamlit):
 15. **Discord embed: one field per signal** — multi-line value with Entry/Stop/Target/RR/Rationale. Zero-signal days always post (never go silent). Confirmed as mobile-friendly.
 
 16. **Notifier is DB-unaware** — `DiscordNotifier.post()` receives `open_count` from caller; it never touches SQLite directly.
+
+17. **One signal per pair per day** — when both 4h and 1d approve the same pair, keep the higher R:R. On tie, prefer 1d (swing trading alignment). Prevents subscribers from seeing duplicate signals for the same asset with conflicting stop levels.
+
+18. **R:R computed from entry midpoint** — SL and TP are symmetric around the midpoint of the entry zone. TP is derived from actual risk after SL rounding, guaranteeing R:R >= configured minimum. Previous formula computed SL from entry_low but risk from entry_high, causing systematic R:R < 2.0.
+
+19. **R:R enforcement gate in RiskAgent** — proposals with R:R below `take_profit_rr_ratio` (2.0) are rejected. Previously R:R was documented but never enforced.
+
+20. **Duplicate signal protection** — `UNIQUE(pair, timeframe, report_date)` in schema + `INSERT OR IGNORE`. Re-running the pipeline is safe.
+
+21. **StrategyAgent contrarian philosophy** — system prompt rewritten: technicals drive entry, sentiment adjusts conviction (never gates it). Extreme fear + strong technicals = BUY (best opportunities). This reversed the previous behaviour where extreme fear vetoed all entries.
+
+22. **Confidence threshold lowered to 0.55** — pre-calibration adjustment. The LLM-generated confidence score is not statistically calibrated; 0.65 was too aggressive and rejected valid setups in sideways markets. Will tighten at V2.1 with 30+ closed trades.
+
+23. **Context window budget** — all agents use max_output_tokens=512. Qwen3-32B-AWQ with `--max-model-len 4096` leaves ~3500 tokens for input. Previous values (1024-2048) caused context overflow on StrategyAgent.
+
+24. **Pipeline run traced end-to-end in Langfuse** — `run_pipeline()` is decorated with `@lf_observe(name="daily_pipeline")`. Trace ID is stored in the DB with each signal.

@@ -167,6 +167,8 @@ def _build_patches(
     mock_signal_logger = MagicMock()
     mock_signal_logger.log.return_value = "BTCUSDT_2026-03-20_abc12345"
     mock_signal_logger.open_signal_count.return_value = 3
+    mock_signal_logger.__enter__ = MagicMock(return_value=mock_signal_logger)
+    mock_signal_logger.__exit__ = MagicMock(return_value=False)
 
     mock_notifier = MagicMock()
     mock_notifier.post.return_value = True
@@ -233,7 +235,6 @@ class TestPipelineFlow:
 
         mocks["signal_logger"].log.assert_called_once()
         mocks["signal_logger"].open_signal_count.assert_called_once()
-        mocks["signal_logger"].close.assert_called_once()
 
     def test_posts_to_discord(self):
         _, mocks = _run_with_patches()
@@ -294,6 +295,44 @@ class TestPipelineFlow:
 
         # Pipeline still completes — one proposal succeeds, one fails
         assert mock_quant.run.call_count == 2
+
+
+class TestDedupPerPair:
+    """Test the one-signal-per-pair deduplication logic."""
+
+    def test_keeps_higher_rr(self):
+        from crypto_swing_copilot.main import _dedup_per_pair
+
+        e4h = _make_entry(symbol="SOLUSDT", timeframe="4h", reward_risk_ratio=2.1)
+        e1d = _make_entry(symbol="SOLUSDT", timeframe="1d", reward_risk_ratio=2.5)
+        result = _dedup_per_pair([e4h, e1d])
+
+        assert len(result) == 1
+        assert result[0].timeframe == "1d"
+
+    def test_prefers_1d_on_tie(self):
+        from crypto_swing_copilot.main import _dedup_per_pair
+
+        e4h = _make_entry(symbol="SOLUSDT", timeframe="4h", reward_risk_ratio=2.0)
+        e1d = _make_entry(symbol="SOLUSDT", timeframe="1d", reward_risk_ratio=2.0)
+        result = _dedup_per_pair([e4h, e1d])
+
+        assert len(result) == 1
+        assert result[0].timeframe == "1d"
+
+    def test_different_pairs_both_kept(self):
+        from crypto_swing_copilot.main import _dedup_per_pair
+
+        e1 = _make_entry(symbol="BTCUSDT", timeframe="4h")
+        e2 = _make_entry(symbol="SOLUSDT", timeframe="4h")
+        result = _dedup_per_pair([e1, e2])
+
+        assert len(result) == 2
+
+    def test_empty_input(self):
+        from crypto_swing_copilot.main import _dedup_per_pair
+
+        assert _dedup_per_pair([]) == []
 
 
 class TestCLI:

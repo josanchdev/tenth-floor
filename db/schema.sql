@@ -31,5 +31,9 @@ CREATE TABLE IF NOT EXISTS signals (
     outcome_date             TEXT,
     max_adverse_excursion    REAL,
     max_favorable_excursion  REAL,
-    langfuse_trace_id        TEXT
+    langfuse_trace_id        TEXT,
+
+    -- Prevent duplicate signals for the same pair/timeframe on the same day.
+    -- Re-running the pipeline is safe: the second insert is silently skipped.
+    UNIQUE(pair, timeframe, report_date)
 );

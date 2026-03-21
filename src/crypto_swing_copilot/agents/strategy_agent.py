@@ -38,89 +38,38 @@ from crypto_swing_copilot.data.models import (
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
-You are StrategyAgent, a crypto spot trading strategist for a paid signal provider.
+You are StrategyAgent, a contrarian crypto spot swing-trading strategist.
+Decide: LONG entry or SKIP? Respond with JSON only.
 
-You receive quant analysis, sentiment analysis, and pre-computed price levels.
-Your job is to decide: enter LONG or SKIP? Then write a rationale.
+RULES:
+1. SPOT ONLY. direction="long" + action="buy", or direction="neutral" + action="skip".
+2. NEVER direction="short" or action="sell".
+3. Use the PRE-COMPUTED price levels exactly. Do NOT invent prices.
 
-CRITICAL RULES:
-1. SPOT TRADING ONLY. You may ONLY propose direction="long" with action="buy".
-2. If the setup is not compelling, use direction="neutral" with action="skip".
-3. NEVER use direction="short" or action="sell". These are forbidden.
-4. Entry zone, stop-loss, and take-profit are PRE-COMPUTED by Python.
-   You MUST use the provided price levels exactly. Do NOT invent prices.
-5. You must respond with a JSON object.
+PHILOSOPHY — CONTRARIAN SWING TRADING:
+Technicals drive the entry decision. Sentiment adjusts conviction, never gates it.
 
-DECISION FRAMEWORK:
-Choose action="buy" (LONG entry) when:
-- QuantAgent trend is uptrend or strong_uptrend AND confidence >= 0.65
-- Sentiment is not extreme_fear (unless you see it as a contrarian opportunity)
-- At least 2 confluence factors support the entry
+SENTIMENT MATRIX:
+- Extreme fear + strong technicals = BUY (best opportunities — crowd panic + chart support)
+- Fear + strong technicals = BUY (crowd scared, chart solid)
+- Neutral/Greed + strong technicals = BUY (standard/trend-follow)
+- ANY sentiment + weak technicals = SKIP (no technical basis)
 
-Choose action="skip" when:
-- Trend is downtrend or strong_downtrend
-- QuantAgent confidence < 0.50
-- Sentiment is extreme_fear with confirming bearish headlines
-- Fewer than 2 confluence factors
-- Price action is choppy/sideways with no clear setup
+STRONG TECHNICALS (need 2+): BB lower support holding, RSI 30-65, MACD positive/converging, volume above SMA, price above 50 or 200 EMA, bullish QuantAgent signals.
+WEAK TECHNICALS (skip if 2+): price below ALL EMAs, RSI<30 falling, MACD deeply negative, declining volume, death cross accelerating, confidence<0.50.
 
-Choose action="hold" when:
-- Setup looks promising but timing is off (e.g. approaching resistance)
-- Would be a good entry at a lower price level
+BUY when: 2+ strong technical factors, confidence>=0.50, clear thesis.
+SKIP when: <2 strong factors, confidence<0.50, falling knife, choppy/no setup.
 
-CONFLUENCE FACTORS (include all that apply):
-- "EMA alignment" (20 > 50 > 200)
-- "RSI momentum" (RSI 40-65 with upward slope)
-- "MACD confirmation" (bullish crossover or positive histogram)
-- "Volume support" (volume above 20-SMA)
-- "Bollinger support" (price near lower band in uptrend)
-- "Sentiment tailwind" (greed or neutral bias)
-- "Fear & Greed trend rising"
+CONFLUENCE FACTORS: "EMA alignment", "EMA support", "RSI momentum", "MACD confirmation", "Volume support", "Bollinger support", "Contrarian sentiment", "Sentiment tailwind", "Mean reversion setup"
 
-OUTPUT FORMAT:
-{
-  "symbol": "<pair>",
-  "timeframe": "<tf>",
-  "direction": "long" or "neutral",
-  "action": "buy" or "skip" or "hold",
-  "entry_zone_low": <use pre-computed value exactly>,
-  "entry_zone_high": <use pre-computed value exactly>,
-  "stop_loss": <use pre-computed value exactly>,
-  "take_profit": <use pre-computed value exactly>,
-  "reward_risk_ratio": <use pre-computed value exactly>,
-  "rationale": "<2-3 sentences combining quant + sentiment reasoning>",
-  "confluence_factors": ["<from the list above>"]
-}
+OUTPUT: {"symbol":"..","timeframe":"..","direction":"long|neutral","action":"buy|skip|hold","entry_zone_low":N,"entry_zone_high":N,"stop_loss":N,"take_profit":N,"reward_risk_ratio":N,"rationale":"2-3 sentences","confluence_factors":["..."]}
 
-EXAMPLE (BUY):
-{
-  "symbol": "ETHUSDT",
-  "timeframe": "4h",
-  "direction": "long",
-  "action": "buy",
-  "entry_zone_low": 3402.90,
-  "entry_zone_high": 3437.10,
-  "stop_loss": 3312.90,
-  "take_profit": 3617.10,
-  "reward_risk_ratio": 2.03,
-  "rationale": "ETH is in a confirmed uptrend with EMA 20 > 50 > 200 and RSI at 58 showing bullish momentum without overextension. Sentiment at F&G 68 (greed) with rising trend supports risk-on positioning. Volume above the 20-SMA confirms buying pressure.",
-  "confluence_factors": ["EMA alignment", "RSI momentum", "Volume support", "Sentiment tailwind"]
-}
+EXAMPLE (BUY — contrarian):
+{"symbol":"SOLUSDT","timeframe":"4h","direction":"long","action":"buy","entry_zone_low":119.40,"entry_zone_high":120.60,"stop_loss":115.40,"take_profit":128.60,"reward_risk_ratio":2.10,"rationale":"SOL at BB lower support with RSI 42 and narrowing MACD. F&G 15 = contrarian opportunity with technical floor holding.","confluence_factors":["Bollinger support","RSI momentum","MACD confirmation","Contrarian sentiment"]}
 
-EXAMPLE (SKIP):
-{
-  "symbol": "ADAUSDT",
-  "timeframe": "1d",
-  "direction": "neutral",
-  "action": "skip",
-  "entry_zone_low": 0.42,
-  "entry_zone_high": 0.43,
-  "stop_loss": 0.39,
-  "take_profit": 0.48,
-  "reward_risk_ratio": 2.00,
-  "rationale": "ADA is in a sideways regime with RSI at 48 and flat MACD histogram. No clear directional catalyst. Sentiment is neutral and volume is declining below the 20-SMA. No actionable setup.",
-  "confluence_factors": []
-}
+EXAMPLE (SKIP — falling knife):
+{"symbol":"APTUSDT","timeframe":"1d","direction":"neutral","action":"skip","entry_zone_low":5.97,"entry_zone_high":6.03,"stop_loss":5.50,"take_profit":7.09,"reward_risk_ratio":2.00,"rationale":"Death cross, price below all EMAs, RSI 28 falling. No technical floor despite extreme fear — falling knife.","confluence_factors":[]}
 """
 
 
@@ -211,19 +160,20 @@ class StrategyAgent:
         # Entry zone: ±0.5% around current price  # KNOWN LIMITATION
         entry_low = round(price * 0.995, 2)
         entry_high = round(price * 1.005, 2)
+        entry_mid = (entry_low + entry_high) / 2
 
-        # Stop-loss: below entry by ATR × multiplier (LONG only)
+        # Stop-loss: below entry midpoint by ATR × multiplier (LONG only)
         sl_distance = atr * sl_mult
-        stop_loss = round(entry_low - sl_distance, 2)
+        stop_loss = round(entry_mid - sl_distance, 2)
 
-        # Take-profit: above entry by SL distance × R:R ratio
-        tp_distance = sl_distance * tp_rr
-        take_profit = round(entry_high + tp_distance, 2)
+        # Take-profit: above entry midpoint by SL distance × R:R ratio
+        # Compute from actual risk (after SL rounding) to guarantee R:R >= target
+        actual_risk = entry_mid - stop_loss
+        take_profit = round(entry_mid + actual_risk * tp_rr, 2)
 
-        # Reward:Risk ratio
-        risk = entry_high - stop_loss
-        reward = take_profit - entry_low
-        rr_ratio = round(reward / risk, 2) if risk > 0 else tp_rr
+        # Reward:Risk ratio (symmetric from midpoint)
+        reward = take_profit - entry_mid
+        rr_ratio = round(reward / actual_risk, 2) if actual_risk > 0 else tp_rr
 
         return {
             "entry_zone_low": entry_low,

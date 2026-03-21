@@ -110,7 +110,7 @@ class TestBuildEmbed:
         entry = _make_entry()
         field = notifier._signal_field(entry)
 
-        assert field["name"] == "BTCUSDT \u00b7 LONG \u00b7 HIGH"
+        assert field["name"] == "BTCUSDT 4H \u00b7 LONG \u00b7 HIGH"
         assert "Entry: 62000.0" in field["value"]
         assert "63000.0" in field["value"]
         assert "Stop: 60500.0" in field["value"]

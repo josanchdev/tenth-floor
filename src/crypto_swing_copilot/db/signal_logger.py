@@ -100,9 +100,9 @@ class SignalLogger:
         signal_id = f"{entry.symbol}_{entry.report_date}_{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc).isoformat()
 
-        self._conn.execute(
+        cursor = self._conn.execute(
             """
-            INSERT INTO signals (
+            INSERT OR IGNORE INTO signals (
                 signal_id, created_at, report_date, pair, timeframe,
                 direction, conviction, confidence_score,
                 entry_low, entry_high, stop_loss, take_profit,
@@ -121,6 +121,13 @@ class SignalLogger:
             ),
         )
         self._conn.commit()
+
+        if cursor.rowcount == 0:
+            logger.info(
+                "Signal already exists for %s %s on %s — skipped duplicate",
+                entry.symbol, entry.timeframe, entry.report_date,
+            )
+            return None
 
         logger.info(
             "Signal logged  id=%s  pair=%s  conviction=%s  confidence=%.2f",
@@ -188,3 +195,9 @@ class SignalLogger:
     def close(self) -> None:
         """Close the database connection."""
         self._conn.close()
+
+    def __enter__(self) -> SignalLogger:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
