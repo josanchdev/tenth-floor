@@ -14,8 +14,10 @@ from crypto_swing_copilot.data.models import (
     SignalDirection,
 )
 from crypto_swing_copilot.notifications.discord_notifier import (
+    COLOR_GOLD,
     COLOR_GREEN,
     COLOR_GREY,
+    COLOR_RED,
     DiscordNotifier,
 )
 
@@ -190,3 +192,72 @@ class TestPost:
             notifier.post([], open_count=0, report_date="2026-03-20")
 
         assert mock_post.call_args.args[0] == "https://discord.com/api/webhooks/test/token"
+
+
+# ---------------------------------------------------------------------------
+# Outcome notifications
+# ---------------------------------------------------------------------------
+
+class TestPostOutcome:
+    """Tests for post_outcome() — signal resolution embeds."""
+
+    def test_hit_tp_embed(self, notifier):
+        signal = {
+            "pair": "BTCUSDT", "status": "HIT_TP", "entry_high": 62000.0,
+            "outcome_price": 66000.0, "timeframe": "1d",
+            "stop_loss": 60000.0, "take_profit": 66000.0,
+        }
+
+        with patch("requests.post", return_value=_mock_response(204)) as mock_post:
+            result = notifier.post_outcome(signal)
+
+        assert result is True
+        embed = mock_post.call_args.kwargs["json"]["embeds"][0]
+        assert embed["color"] == COLOR_GREEN
+        assert "TARGET HIT" in embed["title"]
+        assert "BTCUSDT" in embed["title"]
+        assert "+6.5%" in embed["description"]
+
+    def test_hit_sl_embed(self, notifier):
+        signal = {
+            "pair": "ETHUSDT", "status": "HIT_SL", "entry_high": 3000.0,
+            "outcome_price": 2850.0, "timeframe": "1d",
+            "stop_loss": 2850.0, "take_profit": 3300.0,
+        }
+
+        with patch("requests.post", return_value=_mock_response(204)) as mock_post:
+            result = notifier.post_outcome(signal)
+
+        assert result is True
+        embed = mock_post.call_args.kwargs["json"]["embeds"][0]
+        assert embed["color"] == COLOR_RED
+        assert "STOPPED OUT" in embed["title"]
+        assert "-5.0%" in embed["description"]
+
+    def test_expired_embed(self, notifier):
+        signal = {
+            "pair": "SOLUSDT", "status": "EXPIRED", "entry_high": 150.0,
+            "timeframe": "1d", "stop_loss": 140.0, "take_profit": 170.0,
+        }
+
+        with patch("requests.post", return_value=_mock_response(204)) as mock_post:
+            result = notifier.post_outcome(signal)
+
+        assert result is True
+        embed = mock_post.call_args.kwargs["json"]["embeds"][0]
+        assert embed["color"] == COLOR_GOLD
+        assert "EXPIRED" in embed["title"]
+        assert "14 days" in embed["description"]
+
+    def test_unknown_status_returns_false(self, notifier):
+        signal = {"pair": "BTCUSDT", "status": "OPEN", "timeframe": "1d"}
+        result = notifier.post_outcome(signal)
+        assert result is False
+
+    def test_no_url_returns_false(self, notifier_no_url):
+        signal = {
+            "pair": "BTCUSDT", "status": "HIT_TP", "entry_high": 62000.0,
+            "outcome_price": 66000.0, "timeframe": "1d",
+        }
+        result = notifier_no_url.post_outcome(signal)
+        assert result is False

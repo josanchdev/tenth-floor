@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 COLOR_GREEN = 0x00FF88
 COLOR_GREY = 0x888888
+COLOR_RED = 0xFF4444
+COLOR_GOLD = 0xFFD700
 
 
 class DiscordNotifier:
@@ -121,6 +123,67 @@ class DiscordNotifier:
             "value": value,
             "inline": False,
         }
+
+    def post_outcome(self, signal: dict) -> bool:
+        """Post a signal resolution update to Discord.
+
+        Parameters
+        ----------
+        signal:
+            Dict with at least: pair, status, entry_high, stop_loss,
+            take_profit, outcome_price, timeframe.
+
+        Returns
+        -------
+        bool
+            ``True`` if the webhook call succeeded.
+        """
+        if not self._webhook_url:
+            return False
+
+        status = signal.get("status", "")
+        pair = signal.get("pair", "???")
+        entry = signal.get("entry_high", 0)
+        outcome_price = signal.get("outcome_price")
+        timeframe = signal.get("timeframe", "")
+
+        if status == "HIT_TP":
+            color = COLOR_GREEN
+            icon = "\u2705"  # ✅
+            label = "TARGET HIT"
+            if entry and outcome_price:
+                pct = (outcome_price - entry) / entry * 100
+                detail = f"+{pct:.1f}% at {outcome_price}"
+            else:
+                detail = f"at {outcome_price}"
+        elif status == "HIT_SL":
+            color = COLOR_RED
+            icon = "\U0001f6d1"  # 🛑
+            label = "STOPPED OUT"
+            if entry and outcome_price:
+                pct = (outcome_price - entry) / entry * 100
+                detail = f"{pct:.1f}% at {outcome_price}"
+            else:
+                detail = f"at {outcome_price}"
+        elif status == "EXPIRED":
+            color = COLOR_GOLD
+            icon = "\u23f0"  # ⏰
+            label = "EXPIRED"
+            detail = "14 days — no resolution"
+        else:
+            return False
+
+        embed = {
+            "title": f"{icon} {pair} {timeframe.upper()} — {label}",
+            "description": detail,
+            "color": color,
+            "footer": {
+                "text": "Powered by The Tenth Floor AI",
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        return self._send({"embeds": [embed]})
 
     def _send(self, payload: dict) -> bool:
         """Send a JSON payload to the Discord webhook.

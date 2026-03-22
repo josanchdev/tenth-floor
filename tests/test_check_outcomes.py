@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -270,3 +271,98 @@ class TestCheckOutcomesIntegration:
 
         # No longer in active signals
         assert sig_logger.open_signal_count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Discord notifier wiring
+# ---------------------------------------------------------------------------
+
+
+class TestCheckOutcomesNotifier:
+    """Verify check_outcomes() calls notifier on resolution but not on dry run."""
+
+    def _setup_db_with_open_signal(self, tmp_path: Path) -> tuple[Path, str]:
+        """Log a signal and transition it to OPEN so we can test resolution."""
+        db_path = tmp_path / "test.db"
+        sig_logger = SignalLogger(db_path=db_path)
+        entry = PlaybookEntry(
+            symbol="BTCUSDT", timeframe="1d", report_date="2024-03-14",
+            verdict=PlaybookVerdict.APPROVED, verdict_reasoning="Test.",
+            direction=SignalDirection.LONG, action=SetupAction.BUY,
+            entry_zone_low=61690.0, entry_zone_high=62310.0,
+            stop_loss=61090.0, take_profit=63510.0,
+            reward_risk_ratio=2.0, confidence_score=0.82,
+            conviction="high", suggested_risk_pct=0.02,
+            strategy_rationale="Test.", rank=1,
+        )
+        signal_id = sig_logger.log(entry)
+        sig_logger.update_signal(
+            signal_id, status="OPEN",
+            entered_at="2024-03-14T04:00:00+00:00",
+        )
+        return db_path, signal_id
+
+    @staticmethod
+    def _near_future_candles(
+        rows: list[tuple[float, float, float, float]],
+    ) -> pd.DataFrame:
+        """Candles timestamped just after now() so they pass the created_at filter."""
+        # 1 hour from now — after created_at but within expiry window
+        near_future_ms = int((datetime.now(timezone.utc).timestamp() + 3600) * 1000)
+        return _make_candles(rows, start_ts=near_future_ms)
+
+    def test_notifier_called_on_tp_hit(self, tmp_path: Path) -> None:
+        db_path, _ = self._setup_db_with_open_signal(tmp_path)
+
+        # Candle that triggers TP (high >= 63510)
+        candles = self._near_future_candles([(62000, 64000, 61500, 63800)])
+        mock_fetcher = MagicMock()
+        mock_fetcher.fetch_ohlcv.return_value = candles
+        mock_notifier = MagicMock()
+
+        check_outcomes(db_path=db_path, fetcher=mock_fetcher, notifier=mock_notifier)
+
+        mock_notifier.post_outcome.assert_called_once()
+        call_arg = mock_notifier.post_outcome.call_args[0][0]
+        assert call_arg["status"] == "HIT_TP"
+
+    def test_notifier_not_called_on_dry_run(self, tmp_path: Path) -> None:
+        db_path, _ = self._setup_db_with_open_signal(tmp_path)
+
+        candles = self._near_future_candles([(62000, 64000, 61500, 63800)])
+        mock_fetcher = MagicMock()
+        mock_fetcher.fetch_ohlcv.return_value = candles
+        mock_notifier = MagicMock()
+
+        check_outcomes(
+            db_path=db_path, fetcher=mock_fetcher,
+            notifier=mock_notifier, dry_run=True,
+        )
+
+        mock_notifier.post_outcome.assert_not_called()
+
+    def test_notifier_not_called_on_open_transition(self, tmp_path: Path) -> None:
+        """PENDING → OPEN should NOT trigger a Discord notification."""
+        db_path = tmp_path / "test.db"
+        sig_logger = SignalLogger(db_path=db_path)
+        entry = PlaybookEntry(
+            symbol="BTCUSDT", timeframe="1d", report_date="2024-03-14",
+            verdict=PlaybookVerdict.APPROVED, verdict_reasoning="Test.",
+            direction=SignalDirection.LONG, action=SetupAction.BUY,
+            entry_zone_low=61690.0, entry_zone_high=62310.0,
+            stop_loss=61090.0, take_profit=63510.0,
+            reward_risk_ratio=2.0, confidence_score=0.82,
+            conviction="high", suggested_risk_pct=0.02,
+            strategy_rationale="Test.", rank=1,
+        )
+        sig_logger.log(entry)
+
+        # Candle enters entry zone but doesn't hit TP or SL
+        candles = self._near_future_candles([(62500, 62800, 62000, 62300)])
+        mock_fetcher = MagicMock()
+        mock_fetcher.fetch_ohlcv.return_value = candles
+        mock_notifier = MagicMock()
+
+        check_outcomes(db_path=db_path, fetcher=mock_fetcher, notifier=mock_notifier)
+
+        mock_notifier.post_outcome.assert_not_called()

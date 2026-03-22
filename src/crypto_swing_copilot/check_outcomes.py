@@ -26,6 +26,7 @@ import pandas as pd
 
 from crypto_swing_copilot.data.market_data import MarketDataFetcher
 from crypto_swing_copilot.db.signal_logger import SignalLogger
+from crypto_swing_copilot.notifications.discord_notifier import DiscordNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ _EXPIRY_DAYS = 14
 def check_outcomes(
     db_path: Path | str | None = None,
     fetcher: MarketDataFetcher | None = None,
+    notifier: DiscordNotifier | None = None,
     expiry_days: int = _EXPIRY_DAYS,
     dry_run: bool = False,
 ) -> dict:
@@ -50,6 +52,8 @@ def check_outcomes(
         Override DB path (useful for testing).
     fetcher:
         Override MarketDataFetcher (useful for testing).
+    notifier:
+        Override DiscordNotifier (useful for testing).
     expiry_days:
         Days after which unresolved signals expire.
     dry_run:
@@ -63,6 +67,8 @@ def check_outcomes(
     sig_logger = SignalLogger(db_path)
     if fetcher is None:
         fetcher = MarketDataFetcher()
+    if notifier is None:
+        notifier = DiscordNotifier()
 
     active = sig_logger.get_active_signals()
     if not active:
@@ -111,6 +117,10 @@ def check_outcomes(
             "Signal %s → %s  pair=%s  outcome_price=%s",
             signal["signal_id"], status, pair, result.get("outcome_price"),
         )
+
+        # Post resolution to Discord (not for OPEN transitions or dry runs)
+        if not dry_run and status in ("HIT_TP", "HIT_SL", "EXPIRED"):
+            notifier.post_outcome({**signal, **result})
 
     logger.info(
         "Outcome check complete  checked=%d  entered=%d  tp=%d  sl=%d  expired=%d",
