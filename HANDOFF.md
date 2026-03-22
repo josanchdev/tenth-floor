@@ -1,10 +1,39 @@
 # Handoff Note — V2 Pivot Progress
 
-Generated: 2026-03-21
+Generated: 2026-03-22
 
 ## 1. What Is Complete
 
-### Post-V2 Audit Fixes (uncommitted)
+### Signal Quality Overhaul (2026-03-22)
+
+Six-task sprint to reduce false signals and adopt Option B philosophy (0–2 high-conviction signals/day, silence as default).
+
+**Task A — Structure-based price levels** (commit `678544a`)
+- `ta_calculator.py` — `_detect_swing_levels()`: swing pivot detection (order=5 lookback) for support/resistance levels.
+- `models.py` — `TAIndicators` gains `support_levels`, `resistance_levels`, `trend_score` fields.
+- `strategy_agent.py` — `_compute_price_levels()` rewritten: entry anchored to nearest swing low, SL below structural support with ATR buffer, TP at nearest resistance. ATR-only formula as fallback.
+
+**Task B — Deterministic trend score** (commit `ec0fbe3`)
+- `ta_calculator.py` — `_compute_trend_score()`: 7 binary indicator checks → 0–1 score. Replaces LLM confidence for gating and conviction tiers.
+- `main.py` — uses `snap.indicators.trend_score` instead of `quant_signal.confidence` for proposal scoring.
+
+**Task C → Dropped 4h timeframe entirely** (commit `0a6198c`)
+- `risk_profile.json` — `timeframes: ["1d"]` (was `["4h", "1d"]`).
+- `main.py` — removed `_dedup_per_pair()`, MTF gate, `_TF_PREFERENCE`. Dead code cleanup.
+- Tests: removed 6 tests (4 dedup + 2 MTF gate).
+
+**Task D — Option B signal philosophy** (commit `b8d8e97`)
+- `risk_profile.json` — `max_daily_signals: 2` (was 5).
+- `discord_notifier.py` — zero-signal message updated to reflect intentional silence.
+
+**Task E — BTC relative strength filter** (commit `0aaa704`)
+- `main.py` — RS gate: in fear/extreme_fear markets, alts underperforming BTC's % change are skipped. Prevents buying weak alts when money is rotating out.
+
+**Task F — Discord outcome notifications** (commit `9b88dd4`)
+- `discord_notifier.py` — `post_outcome()`: color-coded embeds for HIT_TP (green), HIT_SL (red), EXPIRED (gold) with percentage gain/loss.
+- `check_outcomes.py` — wired `DiscordNotifier` into outcome checker. Posts on resolution, skips dry runs and OPEN transitions.
+
+### Post-V2 Audit Fixes (commit `d1dfa5a`)
 
 Comprehensive technical audit of the full pipeline after first live runs.
 Fixes 3 correctness bugs, adds 2 integrity safeguards, and 5 new tests.
@@ -38,9 +67,9 @@ Fixes 3 correctness bugs, adds 2 integrity safeguards, and 5 new tests.
 **Confidence threshold lowered**
 - `risk_profile.json` — `min_setup_confidence` lowered from 0.65 to 0.55. Pre-calibration adjustment — will tighten at V2.1 with 30+ closed trades.
 
-**Tests**: 112 passing (was 93). 5 new tests: 4 dedup + 1 R:R gate.
+**Tests**: 112 passing at this commit (was 93). 5 new tests: 4 dedup + 1 R:R gate.
 
-### Task 14 — Admin dashboard (uncommitted)
+### Task 14 — Admin dashboard (commit `d1dfa5a`)
 
 - **`dashboard/app.py`** — Streamlit admin UI. KPI cards (total/open/closed/win rate/avg R:R), signal history table (filterable by pair/status/conviction/timeframe/date), performance by conviction tier (requires 30+ closed trades), outcome distribution chart, MAE/MFE analysis.
 - **`dashboard/queries.py`** — Pure SQL + pandas. `load_signals()`, `compute_tier_stats()`. No Streamlit dependency — testable independently.
@@ -114,27 +143,23 @@ None. Working tree is clean.
 
 ## 3. First Dry Run Results (2026-03-21)
 
-Pipeline ran end-to-end successfully against BTCUSDT with local Qwen3-32B-AWQ:
-
-| Step | Result |
-|------|--------|
-| OHLCV | 500 bars fetched (4h + 1d), cached as Parquet |
-| Sentiment | F&G = 11 (Extreme Fear), 10 CoinDesk headlines |
-| Snapshots | 2 built (4h + 1d), 13 TA indicators each |
-| SentimentAgent | bias=extreme_fear |
-| QuantAgent 4h | downtrend, confidence=0.68, 4 signals |
-| QuantAgent 1d | downtrend, confidence=0.62, 3 signals |
-| StrategyAgent | Both timeframes → action=skip, direction=neutral |
-| RiskAgent | 2 rejected ("Strategy action is skip") |
-| **Result** | **0 approved — correct for extreme fear / downtrend** |
-
-Total runtime: ~30 seconds (6 LLM calls to local Qwen3-32B-AWQ on RTX 3090).
+Pipeline ran end-to-end successfully against BTCUSDT with local Qwen3-32B-AWQ.
+Total runtime: ~30 seconds (6 LLM calls on RTX 3090). Result: 0 approved — correct for extreme fear / downtrend.
 
 ---
 
 ## 4. Commit History
 
 ```
+9b88dd4 feat: Discord outcome notifications — post TP/SL/EXPIRED resolution updates
+0aaa704 feat: BTC relative strength filter — skip weak alts in fear markets
+b8d8e97 feat: Option B — max 2 signals/day, silence-first Discord messaging
+0a6198c refactor: drop 4h timeframe, remove dedup and MTF gate dead code
+dd96f15 feat: multi-timeframe agreement gate — 4h BUY requires 1d trend >= sideways
+ec0fbe3 feat: deterministic trend score replaces LLM confidence for gating
+678544a feat: structure-based price levels — anchor entry/SL/TP to real S/R
+d1dfa5a fix: R:R formula, duplicate protection, per-pair dedup, context window, dashboard
+98dd5ac docs: update HANDOFF.md — full V2 state through first dry run
 b50ec0d fix: pandas_ta compat, model name, RiskAgent parsing, pipeline resilience
 ce5b90b feat: daily pipeline orchestrator (main.py)
 e3fbd5c feat: Discord webhook notifier (Task 13)
@@ -152,19 +177,19 @@ be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers    
 
 ## 5. Test Coverage
 
-112 tests passing across 9 files. All mocked — no network calls, no LLM server required.
+144 tests passing across 9 files. All mocked — no network calls, no LLM server required.
 
 | File | Tests | Covers |
 |------|-------|--------|
-| test_agents.py | 17 | All 4 agents + base utilities + R:R gate |
-| test_check_outcomes.py | 11 | Outcome checker candle walk |
-| test_dashboard.py | 5 | Dashboard queries |
-| test_discord_notifier.py | 12 | Embed construction + webhook posting (incl. timeframe label) |
-| test_main.py | 15 | Pipeline flow + CLI parsing + per-pair dedup (4 new) |
+| test_ta_calculator.py | 30 | TA indicators + swing levels + trend score |
+| test_agents.py | 21 | All 4 agents + base utilities + R:R gate + price levels |
+| test_main.py | 20 | Pipeline flow + CLI + RS gate + BTC correlation |
+| test_discord_notifier.py | 17 | Embeds + webhook + outcome notifications |
+| test_dashboard.py | 14 | Dashboard queries |
+| test_check_outcomes.py | 14 | Outcome checker candle walk + notifier wiring |
 | test_pair_snapshot.py | 11 | Snapshot builder |
 | test_sentiment.py | 9 | F&G + RSS fetching |
 | test_signal_logger.py | 8 | SQLite logger |
-| test_ta_calculator.py | 15 | TA indicator computation |
 
 ---
 
@@ -181,10 +206,10 @@ be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers    
 ### Immediate priorities
 
 1. **Run pipeline daily** — manual runs from personal PC. Accumulate signals.
-2. **Run `check_outcomes.py` regularly** — resolve PENDING/OPEN signals against real candles.
+2. **Run `check_outcomes.py` regularly** — resolve PENDING/OPEN signals against real candles. Outcome notifications now auto-post to Discord.
 3. **Review Langfuse traces** — assess reasoning quality, iterate on prompts.
 4. **Move prompts to Langfuse Prompt Management** — edit prompts from UI without code changes.
-5. **At 30+ closed trades** — calibrate confidence thresholds, tighten `min_setup_confidence`.
+5. **At 30+ closed trades** — calibrate trend_score thresholds and confidence cutoffs.
 
 ---
 
@@ -237,3 +262,15 @@ be4c7fb feat: V2 pivot — replace EUR portfolio logic with conviction tiers    
 23. **Context window budget** — all agents use max_output_tokens=512. Qwen3-32B-AWQ with `--max-model-len 4096` leaves ~3500 tokens for input. Previous values (1024-2048) caused context overflow on StrategyAgent.
 
 24. **Pipeline run traced end-to-end in Langfuse** — `run_pipeline()` is decorated with `@lf_observe(name="daily_pipeline")`. Trace ID is stored in the DB with each signal.
+
+25. **4h timeframe removed entirely** — pipeline now runs 1d only. Dedup logic and MTF gate removed as dead code. Rationale: 4h adds noise and compute cost without improving signal quality for swing trading.
+
+26. **Option B signal philosophy** — max 2 signals/day. Silence is the default. Zero-signal days post "the market doesn't offer a clear edge right now" instead of "no actionable setups today."
+
+27. **Structure-based price levels** — entry zones anchored to swing lows (nearest support within 1.5×ATR). SL placed below structural support with 0.5×ATR buffer. TP targets nearest resistance above entry. ATR-only formula is the fallback, not the default.
+
+28. **Deterministic trend score** — 7 binary indicator checks (price vs EMAs, EMA alignment, RSI zone, MACD, volume) compute a 0–1 score in Python. Used for gating and conviction tiers instead of LLM-generated confidence. LLM confidence is fallback only.
+
+29. **BTC relative strength filter** — in fear/extreme_fear markets, alts whose recent % change is below BTC's are skipped. Prevents buying weak alts when money is rotating out.
+
+30. **Discord outcome notifications** — `check_outcomes.py` posts color-coded embeds when signals resolve: green for TP hit (+X.X%), red for SL hit (-X.X%), gold for expired. Skipped on dry runs and OPEN transitions.
