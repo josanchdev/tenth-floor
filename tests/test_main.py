@@ -464,6 +464,145 @@ class TestTrendRegimeGate:
         mocks["strategy"].run.assert_called_once()
 
 
+class TestRelativeStrengthGate:
+    """Skip alts underperforming BTC in fear environments."""
+
+    def test_weak_alt_skipped_in_fear(self):
+        """Alt down more than BTC + fear sentiment → skip."""
+        # BTC down 5% over recent closes
+        btc_snap = PairSnapshot(
+            symbol="BTCUSDT", timeframe="1d",
+            current_price=57_000.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.43),
+            recent_closes=[57_000.0, 58_000.0, 59_000.0, 60_000.0],  # -5%
+            recent_volumes=[1000.0] * 4,
+        )
+        # ALT down 10% — underperforming BTC
+        alt_snap = PairSnapshot(
+            symbol="SOLUSDT", timeframe="1d",
+            current_price=90.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.57),
+            recent_closes=[90.0, 94.0, 97.0, 100.0],  # -10%
+            recent_volumes=[500.0] * 4,
+        )
+
+        quant_signal = QuantSignal(
+            symbol="BTCUSDT", timeframe="1d",
+            trend_regime=TrendRegime.UPTREND,
+            signals=["EMA bullish"], confidence=0.75, reasoning="Up",
+        )
+        fear_sentiment = SentimentSignal(
+            bias=SentimentBias.FEAR,
+            risk_narrative="Fear", key_headlines=[], fear_greed_value=25,
+        )
+        btc_skip = SetupProposal(
+            symbol="BTCUSDT", timeframe="1d",
+            direction=SignalDirection.NEUTRAL, action=SetupAction.SKIP,
+            entry_zone_low=56_000.0, entry_zone_high=58_000.0,
+            stop_loss=54_000.0, take_profit=62_000.0,
+            reward_risk_ratio=2.0, rationale="Skip BTC", confluence_factors=[],
+        )
+        sol_buy = SetupProposal(
+            symbol="SOLUSDT", timeframe="1d",
+            direction=SignalDirection.LONG, action=SetupAction.BUY,
+            entry_zone_low=89.0, entry_zone_high=91.0,
+            stop_loss=85.0, take_profit=100.0,
+            reward_risk_ratio=2.5, rationale="Buy SOL", confluence_factors=[],
+        )
+
+        mock_strategy = MagicMock()
+        mock_strategy.run.side_effect = [btc_skip, sol_buy]
+
+        mock_risk = MagicMock()
+        mock_risk.run.return_value = []
+
+        patches, mocks = _build_patches(
+            snapshots=[btc_snap, alt_snap],
+            quant_signal=quant_signal,
+            sentiment_signal=fear_sentiment,
+        )
+        patches[f"{_PATCH_BASE}.StrategyAgent"] = MagicMock(return_value=mock_strategy)
+        patches[f"{_PATCH_BASE}.RiskAgent"] = MagicMock(return_value=mock_risk)
+
+        ctx_managers = [patch(target, val) for target, val in patches.items()]
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            run_pipeline(dry_run=True)
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+        # BTC skip passes through, SOL buy should be RS-gated
+        risk_args = mock_risk.run.call_args[0][0]
+        symbols = [p.symbol for p, _ in risk_args]
+        assert "SOLUSDT" not in symbols, (
+            f"SOLUSDT should have been RS-gated, got: {symbols}"
+        )
+
+    def test_strong_alt_passes_in_fear(self):
+        """Alt outperforming BTC in fear → passes."""
+        # BTC down 8%
+        btc_snap = PairSnapshot(
+            symbol="BTCUSDT", timeframe="1d",
+            current_price=55_200.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.29),
+            recent_closes=[55_200.0, 57_000.0, 59_000.0, 60_000.0],  # -8%
+            recent_volumes=[1000.0] * 4,
+        )
+        # ALT down only 3% — outperforming BTC (relative strength)
+        alt_snap = PairSnapshot(
+            symbol="SOLUSDT", timeframe="1d",
+            current_price=97.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.71),
+            recent_closes=[97.0, 98.0, 99.0, 100.0],  # -3%
+            recent_volumes=[500.0] * 4,
+        )
+
+        fear_sentiment = SentimentSignal(
+            bias=SentimentBias.EXTREME_FEAR,
+            risk_narrative="Extreme fear", key_headlines=[], fear_greed_value=10,
+        )
+
+        entries, mocks = _run_with_patches(
+            dry_run=True,
+            snapshots=[btc_snap, alt_snap],
+            sentiment_signal=fear_sentiment,
+        )
+        # Strategy should be called for both — alt not gated
+        assert mocks["strategy"].run.call_count == 2
+
+    def test_gate_inactive_in_greed(self):
+        """RS gate only triggers in fear — greed environments pass all alts."""
+        btc_snap = PairSnapshot(
+            symbol="BTCUSDT", timeframe="1d",
+            current_price=62_000.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.86),
+            recent_closes=[62_000.0, 61_000.0, 60_000.0],
+            recent_volumes=[1000.0] * 3,
+        )
+        # Alt underperforming, but sentiment is greed — gate should NOT trigger
+        alt_snap = PairSnapshot(
+            symbol="SOLUSDT", timeframe="1d",
+            current_price=95.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.71),
+            recent_closes=[95.0, 98.0, 100.0],  # -5% while BTC +3%
+            recent_volumes=[500.0] * 3,
+        )
+
+        greed_sentiment = SentimentSignal(
+            bias=SentimentBias.GREED,
+            risk_narrative="Greed", key_headlines=[], fear_greed_value=72,
+        )
+
+        entries, mocks = _run_with_patches(
+            dry_run=True,
+            snapshots=[btc_snap, alt_snap],
+            sentiment_signal=greed_sentiment,
+        )
+        assert mocks["strategy"].run.call_count == 2
+
+
 class TestBTCCorrelationGuard:
     """BTC-correlation guard limits alt signals when BTC is not approved."""
 

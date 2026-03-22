@@ -123,6 +123,17 @@ def run_pipeline(
     # Track BTC's quant result for the correlation guard
     btc_approved = False
 
+    # ── 4a. BTC relative strength baseline ────────────────────────────
+    # Alts underperforming BTC in a fear environment are weak — skip them.
+    # Compute BTC's % change over the recent_closes window as the baseline.
+    btc_pct_change: float | None = None
+    for snap in snapshots:
+        if snap.symbol == "BTCUSDT" and len(snap.recent_closes) >= 2:
+            newest, oldest = snap.recent_closes[0], snap.recent_closes[-1]
+            if oldest > 0:
+                btc_pct_change = (newest - oldest) / oldest
+            break
+
     for snap in snapshots:
         try:
             quant_signal = quant_agent.run(snap)
@@ -165,6 +176,27 @@ def run_pipeline(
                         snap.symbol, snap.timeframe, vol_ratio, _MIN_VOLUME_RATIO,
                     )
                     continue
+
+            # Relative strength gate: in fear environments, skip alts that
+            # are underperforming BTC.  If BTC is down 5% and the alt is
+            # down 8%, money is rotating OUT — not a good long candidate.
+            if (
+                proposal.action.value == "buy"
+                and snap.symbol != "BTCUSDT"
+                and btc_pct_change is not None
+                and sentiment_signal.bias.value in ("fear", "extreme_fear")
+                and len(snap.recent_closes) >= 2
+            ):
+                alt_oldest = snap.recent_closes[-1]
+                if alt_oldest > 0:
+                    alt_pct = (snap.recent_closes[0] - alt_oldest) / alt_oldest
+                    if alt_pct < btc_pct_change:
+                        logger.info(
+                            "RS gate SKIP  %s  alt=%.1f%% < btc=%.1f%% — "
+                            "underperforming BTC in fear market",
+                            snap.symbol, alt_pct * 100, btc_pct_change * 100,
+                        )
+                        continue
 
             # Use deterministic trend_score for gating/conviction;
             # fall back to LLM confidence only when trend_score unavailable.
