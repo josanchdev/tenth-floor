@@ -174,6 +174,20 @@ class TAIndicators(BaseModel):
     # Volume
     obv: float | None = Field(None, description="On-Balance Volume")
     volume_sma_20: float | None = Field(None, ge=0, description="20-period SMA of volume")
+    volume_ratio: float | None = Field(
+        None, ge=0,
+        description="Latest bar volume / 20-period SMA volume. >1.5 = notable, >2.0 = surge",
+    )
+
+    # Structure — swing highs/lows detected from price pivots
+    support_levels: list[float] = Field(
+        default_factory=list,
+        description="Recent swing low prices (ascending), used to anchor SL and entry zones",
+    )
+    resistance_levels: list[float] = Field(
+        default_factory=list,
+        description="Recent swing high prices (ascending), used to anchor TP targets",
+    )
 
 
 class PairSnapshot(BaseModel):

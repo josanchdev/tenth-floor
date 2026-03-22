@@ -229,6 +229,107 @@ class TestStrategyAgent:
         assert result.action == SetupAction.SKIP
 
 
+class TestComputePriceLevels:
+    """Test that _compute_price_levels anchors to structural S/R."""
+
+    def _make_agent(self):
+        with patch("crypto_swing_copilot.agents.strategy_agent.load_agent_config", return_value={}):
+            from crypto_swing_copilot.agents.strategy_agent import StrategyAgent
+            return StrategyAgent()
+
+    def test_entry_anchored_to_support(self) -> None:
+        """When a support level exists below price, entry_low should match it."""
+        indicators = TAIndicators(
+            ema_20=62000.0, ema_50=61500.0, ema_200=59000.0,
+            rsi_14=55.0, macd_line=100.0, macd_signal=80.0, macd_histogram=20.0,
+            bb_upper=63000.0, bb_middle=62000.0, bb_lower=61000.0,
+            atr_14=500.0, obv=1000000.0, volume_sma_20=50000.0,
+            support_levels=[61200.0, 61700.0],
+            resistance_levels=[62800.0, 63500.0],
+        )
+        snap = PairSnapshot(
+            symbol="BTCUSDT", timeframe="4h",
+            current_price=62000.0, bar_timestamp=1710374400000,
+            indicators=indicators,
+        )
+        agent = self._make_agent()
+        levels = agent._compute_price_levels(snap)
+
+        # Entry low should be the nearest support (61700), not spot - 0.5*ATR
+        assert levels["entry_zone_low"] == 61700.0
+        # SL should be below that support
+        assert levels["stop_loss"] < 61700.0
+        # TP should target resistance at 62800
+        assert levels["take_profit"] == 62800.0
+
+    def test_tp_targets_resistance(self) -> None:
+        """TP should use resistance level when R:R >= minimum."""
+        indicators = TAIndicators(
+            ema_20=100.0, ema_50=98.0, ema_200=95.0,
+            rsi_14=50.0, macd_line=1.0, macd_signal=0.5, macd_histogram=0.5,
+            bb_upper=105.0, bb_middle=100.0, bb_lower=95.0,
+            atr_14=3.0, obv=100000.0, volume_sma_20=5000.0,
+            support_levels=[98.5],
+            resistance_levels=[108.0],
+        )
+        snap = PairSnapshot(
+            symbol="SOLUSDT", timeframe="4h",
+            current_price=100.0, bar_timestamp=1710374400000,
+            indicators=indicators,
+        )
+        agent = self._make_agent()
+        levels = agent._compute_price_levels(snap)
+
+        # Resistance is at 108, entry_mid around 99.25, SL around 97.
+        # R:R = (108-99.25)/(99.25-97) ≈ 3.9 — well above 2.0
+        assert levels["take_profit"] == 108.0
+        assert levels["reward_risk_ratio"] > 2.0
+
+    def test_fallback_when_no_sr(self) -> None:
+        """Without S/R levels, falls back to ATR-based formula."""
+        indicators = TAIndicators(
+            ema_20=62000.0, ema_50=61500.0, ema_200=59000.0,
+            rsi_14=55.0, macd_line=100.0, macd_signal=80.0, macd_histogram=20.0,
+            bb_upper=63000.0, bb_middle=62000.0, bb_lower=61000.0,
+            atr_14=500.0, obv=1000000.0, volume_sma_20=50000.0,
+            support_levels=[], resistance_levels=[],
+        )
+        snap = PairSnapshot(
+            symbol="BTCUSDT", timeframe="4h",
+            current_price=62000.0, bar_timestamp=1710374400000,
+            indicators=indicators,
+        )
+        agent = self._make_agent()
+        levels = agent._compute_price_levels(snap)
+
+        # Fallback: entry_high = price, entry_low = price - 0.5*ATR
+        assert levels["entry_zone_high"] == 62000.0
+        assert levels["entry_zone_low"] == pytest.approx(62000.0 - 250.0)
+        assert levels["reward_risk_ratio"] >= 2.0
+
+    def test_rr_varies_with_structure(self) -> None:
+        """R:R should NOT always be exactly 2.0 when S/R levels are present."""
+        indicators = TAIndicators(
+            ema_20=100.0, ema_50=98.0, ema_200=95.0,
+            rsi_14=50.0, macd_line=1.0, macd_signal=0.5, macd_histogram=0.5,
+            bb_upper=105.0, bb_middle=100.0, bb_lower=95.0,
+            atr_14=3.0, obv=100000.0, volume_sma_20=5000.0,
+            support_levels=[98.5],
+            resistance_levels=[110.0],
+        )
+        snap = PairSnapshot(
+            symbol="SOLUSDT", timeframe="1d",
+            current_price=100.0, bar_timestamp=1710374400000,
+            indicators=indicators,
+        )
+        agent = self._make_agent()
+        levels = agent._compute_price_levels(snap)
+
+        # With real S/R, R:R should vary — not be pinned to exactly 2.0
+        assert levels["reward_risk_ratio"] != 2.0
+        assert levels["reward_risk_ratio"] >= 2.0
+
+
 # ---------------------------------------------------------------------------
 # RiskAgent tests
 # ---------------------------------------------------------------------------

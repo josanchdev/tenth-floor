@@ -161,6 +161,16 @@ class TACalculator:
         # --- Volume SMA 20 ---
         volume_sma_20 = _last_value(df["volume"].rolling(20).mean())
 
+        # --- Volume ratio (latest bar volume / SMA 20) ---
+        # >1.5 = notable activity, >2.0 = volume surge
+        latest_volume = _safe_float(df["volume"].iloc[-1]) if not df.empty else None
+        volume_ratio: float | None = None
+        if latest_volume is not None and volume_sma_20 is not None and volume_sma_20 > 0:
+            volume_ratio = round(latest_volume / volume_sma_20, 2)
+
+        # --- Swing highs / lows (structural S/R) ---
+        support_levels, resistance_levels = self._detect_swing_levels(df)
+
         indicators = TAIndicators(
             ema_20=ema_20,
             ema_50=ema_50,
@@ -175,6 +185,9 @@ class TACalculator:
             atr_14=atr_14,
             obv=obv,
             volume_sma_20=volume_sma_20,
+            volume_ratio=volume_ratio,
+            support_levels=support_levels,
+            resistance_levels=resistance_levels,
         )
 
         logger.info(
@@ -185,6 +198,63 @@ class TACalculator:
             indicators.obv,
         )
         return indicators
+
+    # ------------------------------------------------------------------
+    # Structural support / resistance (swing pivots)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_swing_levels(
+        df: pd.DataFrame,
+        order: int = 5,
+        max_levels: int = 5,
+    ) -> tuple[list[float], list[float]]:
+        """Detect recent swing lows (support) and swing highs (resistance).
+
+        A swing low at bar *i* means ``low[i]`` is the minimum of the
+        window ``low[i-order : i+order+1]``.  Similarly for swing highs
+        using the ``high`` column.
+
+        Parameters
+        ----------
+        df:
+            OHLCV DataFrame sorted by timestamp ascending.
+        order:
+            Number of bars on each side required to confirm a pivot.
+            Default 5 works well for 4h candles (~20 h look-around).
+        max_levels:
+            Cap on returned levels (most recent kept).
+
+        Returns
+        -------
+        tuple[list[float], list[float]]
+            ``(support_levels, resistance_levels)`` — each sorted ascending
+            by price.  Empty lists when data is insufficient.
+        """
+        if df.empty or len(df) < 2 * order + 1:
+            return [], []
+
+        lows = df["low"].values
+        highs = df["high"].values
+        n = len(df)
+
+        supports: list[float] = []
+        resistances: list[float] = []
+
+        for i in range(order, n - order):
+            window_low = lows[i - order: i + order + 1]
+            if lows[i] == window_low.min():
+                supports.append(round(float(lows[i]), 2))
+
+            window_high = highs[i - order: i + order + 1]
+            if highs[i] == window_high.max():
+                resistances.append(round(float(highs[i]), 2))
+
+        # Keep most recent, then sort by price ascending
+        supports = sorted(set(supports[-max_levels:]))
+        resistances = sorted(set(resistances[-max_levels:]))
+
+        return supports, resistances
 
     # ------------------------------------------------------------------
     # Compute with historical context (for PairSnapshot)
