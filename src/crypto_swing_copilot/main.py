@@ -47,32 +47,6 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-# Timeframe preference for tie-breaking (higher index = preferred)
-_TF_PREFERENCE = {"4h": 0, "1d": 1}
-
-
-def _dedup_per_pair(approved: list[PlaybookEntry]) -> list[PlaybookEntry]:
-    """Keep one signal per pair — highest R:R wins, prefer 1d on tie."""
-    best: dict[str, PlaybookEntry] = {}
-    for entry in approved:
-        existing = best.get(entry.symbol)
-        if existing is None:
-            best[entry.symbol] = entry
-            continue
-        # Higher R:R wins
-        if entry.reward_risk_ratio > existing.reward_risk_ratio:
-            best[entry.symbol] = entry
-        elif entry.reward_risk_ratio == existing.reward_risk_ratio:
-            # Tie: prefer longer timeframe (1d > 4h)
-            if _TF_PREFERENCE.get(entry.timeframe, 0) > _TF_PREFERENCE.get(existing.timeframe, 0):
-                best[entry.symbol] = entry
-
-    deduped = list(best.values())
-    dropped = len(approved) - len(deduped)
-    if dropped:
-        logger.info("Dedup: kept %d signals, dropped %d duplicate pair(s)", len(deduped), dropped)
-    return deduped
-
 
 @lf_observe(name="daily_pipeline")
 def run_pipeline(
@@ -149,15 +123,6 @@ def run_pipeline(
     # Track BTC's quant result for the correlation guard
     btc_approved = False
 
-    # ── 4a. Collect 1d trend scores for multi-timeframe gate ──────────
-    # A 4h BUY in a 1d downtrend is a lower-timeframe bounce trap.
-    # Require 1d trend_score >= 0.3 (at least "sideways") for 4h BUY.
-    _MTF_MIN_DAILY_SCORE = 0.3
-    daily_trend_scores: dict[str, float] = {}
-    for snap in snapshots:
-        if snap.timeframe == "1d" and snap.indicators.trend_score is not None:
-            daily_trend_scores[snap.symbol] = snap.indicators.trend_score
-
     for snap in snapshots:
         try:
             quant_signal = quant_agent.run(snap)
@@ -184,22 +149,6 @@ def run_pipeline(
                 proposal.action.value, proposal.direction.value,
                 proposal.reward_risk_ratio,
             )
-
-            # Multi-timeframe gate: 4h BUY requires 1d trend to be at least sideways.
-            # A 4h bounce in a 1d downtrend is a trap — skip it.
-            if (
-                proposal.action.value == "buy"
-                and snap.timeframe != "1d"
-                and snap.symbol in daily_trend_scores
-                and daily_trend_scores[snap.symbol] < _MTF_MIN_DAILY_SCORE
-            ):
-                logger.info(
-                    "MTF gate SKIP  %s %s  daily_score=%.2f < %.1f — "
-                    "4h bounce in daily downtrend",
-                    snap.symbol, snap.timeframe,
-                    daily_trend_scores[snap.symbol], _MTF_MIN_DAILY_SCORE,
-                )
-                continue
 
             # Volume confirmation gate: in downtrends, require above-average
             # volume on BUY proposals.  Low-volume "bounces" in downtrends
@@ -247,12 +196,7 @@ def run_pipeline(
         len(entries) - len(approved),
     )
 
-    # ── 5b. Dedup: one signal per pair per day ───────────────────────
-    # When both timeframes approve the same pair, keep the higher R:R.
-    # On tie, prefer 1d (better alignment with swing trading horizon).
-    approved = _dedup_per_pair(approved)
-
-    # ── 5c. BTC-correlation guard ─────────────────────────────────────
+    # ── 5b. BTC-correlation guard ─────────────────────────────────────
     # If BTC itself was rejected/skipped, cap alt signals to max 2.
     # Crypto is BTC-correlated; if the leader looks bad, limit exposure.
     if not btc_approved and len(approved) > 2:

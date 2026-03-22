@@ -1,24 +1,26 @@
 {
-  "timeframes": ["4h", "1d"],
+  "timeframes": ["1d"],
   "no_leverage": true,
   "no_futures": true,
   "no_margin": true,
   "spot_only": true,
-  "min_setup_confidence": 0.55,
-  "_comment_confidence": "QuantAgent confidence must exceed this threshold. Lowered from 0.65 to 0.55 pre-calibration — will tighten at V2.1 with 30+ closed trades.",
+  "min_setup_confidence": 0.65,
+  "_comment_confidence": "QuantAgent confidence must exceed this threshold. Raised from 0.55 to 0.65 — tighten further at V2.1 with 30+ closed trades.",
   "stop_loss_atr_multiplier": 1.2,
-  "_comment_sl": "Default SL = entry ± (ATR_14 × 1.5). StrategyAgent may narrow but not widen.",
+  "_comment_sl": "Default SL = entry_mid - (ATR_14 × 1.2).",
   "take_profit_rr_ratio": 2.0,
   "_comment_tp": "Minimum reward-to-risk ratio of 2:1 for a setup to be included in playbook.",
+  "max_daily_signals": 5,
+  "_comment_max_signals": "Hard cap on published signals per day. Sorted by confidence (desc), top N kept. Prevents fire-hose output.",
   "conviction_tiers": {
     "high": {
       "min_confidence": 0.80,
       "suggested_risk_pct": 0.02
     },
     "standard": {
-      "min_confidence": 0.55,
+      "min_confidence": 0.65,
       "suggested_risk_pct": 0.01
     }
   },
-  "_comment_conviction": "Confidence >= 0.80 → high conviction (2% risk). >= 0.55 → standard (1% risk). < 0.55 → SKIP. Pre-calibration thresholds — tighten at V2.1."
+  "_comment_conviction": "Confidence >= 0.80 → high conviction (2% risk). >= 0.65 → standard (1% risk). < 0.65 → SKIP."
 }
