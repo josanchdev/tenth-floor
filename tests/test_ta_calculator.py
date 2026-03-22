@@ -138,6 +138,8 @@ class TestComputeEdgeCases:
         for field_name, value in result.model_dump().items():
             if field_name in ("support_levels", "resistance_levels"):
                 assert value == []
+            elif field_name == "trend_score":
+                assert value is None  # no data → None (not enough indicators)
             else:
                 assert value is None
 
@@ -201,6 +203,68 @@ class TestVolumeRatio:
         df = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
         result = calculator.compute(df)
         assert result.volume_ratio is None
+
+
+class TestTrendScore:
+    """Tests for the deterministic trend score."""
+
+    def test_score_populated_with_250_bars(
+        self, calculator: TACalculator, df_250: pd.DataFrame
+    ) -> None:
+        result = calculator.compute(df_250)
+        assert result.trend_score is not None
+        assert 0.0 <= result.trend_score <= 1.0
+
+    def test_all_bullish_gives_high_score(self) -> None:
+        """When all indicators are bullish, score should be 1.0."""
+        score = TACalculator._compute_trend_score(
+            current_price=100.0,
+            ema_20=95.0, ema_50=90.0, ema_200=80.0,  # price above all
+            rsi_14=55.0,        # in 40-70 range
+            macd_histogram=1.0, # positive
+            volume_ratio=1.5,   # above average
+        )
+        assert score == 1.0
+
+    def test_all_bearish_gives_low_score(self) -> None:
+        """When all indicators are bearish, score should be 0.0."""
+        score = TACalculator._compute_trend_score(
+            current_price=70.0,
+            ema_20=80.0, ema_50=90.0, ema_200=100.0,  # price below all, death cross
+            rsi_14=25.0,          # below 40
+            macd_histogram=-2.0,  # negative
+            volume_ratio=0.5,     # below average
+        )
+        assert score == 0.0
+
+    def test_mixed_gives_intermediate(self) -> None:
+        """Mixed signals → score between 0 and 1."""
+        score = TACalculator._compute_trend_score(
+            current_price=95.0,
+            ema_20=90.0, ema_50=100.0, ema_200=80.0,  # above 20+200, below 50
+            rsi_14=55.0,
+            macd_histogram=-0.5,
+            volume_ratio=1.2,
+        )
+        assert score is not None
+        assert 0.0 < score < 1.0
+
+    def test_none_when_insufficient_indicators(self) -> None:
+        """Fewer than 3 available indicators → None."""
+        score = TACalculator._compute_trend_score(
+            current_price=100.0,
+            ema_20=95.0, ema_50=None, ema_200=None,
+            rsi_14=None, macd_histogram=None, volume_ratio=None,
+        )
+        assert score is None
+
+    def test_none_when_no_price(self) -> None:
+        score = TACalculator._compute_trend_score(
+            current_price=None,
+            ema_20=95.0, ema_50=90.0, ema_200=80.0,
+            rsi_14=55.0, macd_histogram=1.0, volume_ratio=1.5,
+        )
+        assert score is None
 
 
 class TestSwingLevels:

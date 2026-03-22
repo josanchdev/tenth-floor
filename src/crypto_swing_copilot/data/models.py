@@ -179,6 +179,15 @@ class TAIndicators(BaseModel):
         description="Latest bar volume / 20-period SMA volume. >1.5 = notable, >2.0 = surge",
     )
 
+    # Deterministic trend score (Python-computed, not LLM)
+    trend_score: float | None = Field(
+        None, ge=0.0, le=1.0,
+        description=(
+            "Deterministic indicator-agreement score (0–1). "
+            "Replaces LLM confidence for gating and conviction tiers."
+        ),
+    )
+
     # Structure — swing highs/lows detected from price pivots
     support_levels: list[float] = Field(
         default_factory=list,
