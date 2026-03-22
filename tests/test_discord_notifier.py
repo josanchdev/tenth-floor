@@ -102,7 +102,7 @@ class TestBuildEmbed:
         embed = notifier._build_embed([], open_count=3, report_date="2026-03-20")
 
         assert embed["color"] == COLOR_GREY
-        assert "No actionable setups today" in embed["description"]
+        assert "No setups met our criteria today" in embed["description"]
         assert "fields" not in embed
         assert "Open signals in DB: 3" in embed["footer"]["text"]
 

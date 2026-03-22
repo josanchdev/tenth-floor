@@ -98,7 +98,11 @@ class DiscordNotifier:
         if has_signals:
             embed["fields"] = [self._signal_field(e) for e in entries]
         else:
-            embed["description"] = "No actionable setups today."
+            embed["description"] = (
+                "No setups met our criteria today. "
+                "We only publish when the evidence is overwhelming — "
+                "silence means the market doesn't offer a clear edge right now."
+            )
 
         return embed
 
