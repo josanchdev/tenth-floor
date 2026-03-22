@@ -358,3 +358,394 @@ class TestCLI:
         args = _parse_args(["--dry-run"])
         assert args.dry_run is True
         assert args.pairs is None
+
+
+class TestVolumeConfirmationGate:
+    """Volume gate rejects low-volume contrarian buys in downtrends."""
+
+    def test_low_volume_downtrend_buy_skipped(self):
+        """BUY in downtrend with volume_ratio < 1.3 should be skipped."""
+        # Snapshot with low volume ratio
+        snap = PairSnapshot(
+            symbol="BTCUSDT", timeframe="1d", current_price=62000.0,
+            bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(volume_ratio=0.8),
+            recent_closes=[62000.0], recent_volumes=[1000.0],
+        )
+
+        downtrend_quant = QuantSignal(
+            symbol="BTCUSDT", timeframe="1d",
+            trend_regime=TrendRegime.DOWNTREND,
+            signals=["Price below 200 EMA"],
+            confidence=0.70,
+            reasoning="Downtrend",
+        )
+
+        buy_proposal = _make_proposal()
+
+        mock_quant = MagicMock()
+        mock_quant.run.return_value = downtrend_quant
+
+        mock_strategy = MagicMock()
+        mock_strategy.run.return_value = buy_proposal
+
+        patches, mocks = _build_patches(
+            snapshots=[snap],
+            quant_signal=downtrend_quant,
+            proposal=buy_proposal,
+        )
+        patches[f"{_PATCH_BASE}.QuantAgent"] = MagicMock(return_value=mock_quant)
+        patches[f"{_PATCH_BASE}.StrategyAgent"] = MagicMock(return_value=mock_strategy)
+
+        ctx_managers = [patch(target, val) for target, val in patches.items()]
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            run_pipeline(dry_run=True)
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+        # Strategy was called (downtrend, not strong_downtrend)
+        mock_strategy.run.assert_called_once()
+        # But RiskAgent should NOT be called — volume gate killed the proposal
+        mocks["risk"].run.assert_not_called()
+
+    def test_high_volume_downtrend_buy_passes(self):
+        """BUY in downtrend with volume_ratio >= 1.3 should pass through."""
+        snap = PairSnapshot(
+            symbol="BTCUSDT", timeframe="1d", current_price=62000.0,
+            bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(volume_ratio=1.8),
+            recent_closes=[62000.0], recent_volumes=[1000.0],
+        )
+
+        downtrend_quant = QuantSignal(
+            symbol="BTCUSDT", timeframe="1d",
+            trend_regime=TrendRegime.DOWNTREND,
+            signals=["Price below 200 EMA"],
+            confidence=0.70,
+            reasoning="Downtrend but with volume",
+        )
+
+        patches, mocks = _build_patches(
+            snapshots=[snap],
+            quant_signal=downtrend_quant,
+        )
+
+        mock_quant = MagicMock()
+        mock_quant.run.return_value = downtrend_quant
+        patches[f"{_PATCH_BASE}.QuantAgent"] = MagicMock(return_value=mock_quant)
+
+        ctx_managers = [patch(target, val) for target, val in patches.items()]
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            run_pipeline(dry_run=True)
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+        # With high volume, proposal passes through to RiskAgent
+        mocks["risk"].run.assert_called_once()
+
+
+class TestTrendRegimeGate:
+    """Trend-regime gate skips strong_downtrend snapshots before StrategyAgent."""
+
+    def test_strong_downtrend_skips_strategy(self):
+        """QuantAgent returning strong_downtrend should prevent StrategyAgent call."""
+        downtrend_quant = QuantSignal(
+            symbol="BTCUSDT",
+            timeframe="4h",
+            trend_regime=TrendRegime.STRONG_DOWNTREND,
+            signals=["EMA death cross (20 < 50)", "Price below 200 EMA"],
+            confidence=0.45,
+            reasoning="Strong downtrend — death cross accelerating",
+        )
+
+        patches, mocks = _build_patches(quant_signal=downtrend_quant)
+        ctx_managers = [patch(target, val) for target, val in patches.items()]
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            run_pipeline(dry_run=True)
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+        # QuantAgent was called, but StrategyAgent should NOT be called
+        mocks["quant"].run.assert_called_once()
+        mocks["strategy"].run.assert_not_called()
+
+    def test_downtrend_still_allows_strategy(self):
+        """Regular downtrend (not strong) should still reach StrategyAgent."""
+        downtrend_quant = QuantSignal(
+            symbol="BTCUSDT",
+            timeframe="4h",
+            trend_regime=TrendRegime.DOWNTREND,
+            signals=["Price below 200 EMA"],
+            confidence=0.55,
+            reasoning="Downtrend but not extreme",
+        )
+
+        patches, mocks = _build_patches(quant_signal=downtrend_quant)
+        ctx_managers = [patch(target, val) for target, val in patches.items()]
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            run_pipeline(dry_run=True)
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+        mocks["strategy"].run.assert_called_once()
+
+
+class TestMultiTimeframeGate:
+    """4h BUY requires 1d trend_score >= 0.3 (at least sideways)."""
+
+    def test_4h_buy_blocked_when_daily_bearish(self):
+        """A 4h BUY should be skipped if 1d trend_score is below threshold."""
+        # 1d snapshot with bearish trend_score (0.14)
+        snap_1d = PairSnapshot(
+            symbol="BTCUSDT", timeframe="1d",
+            current_price=62_000.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.14),
+            recent_closes=[62_000.0], recent_volumes=[1000.0],
+        )
+        # 4h snapshot for the same pair
+        snap_4h = PairSnapshot(
+            symbol="BTCUSDT", timeframe="4h",
+            current_price=62_000.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.71),
+            recent_closes=[62_000.0], recent_volumes=[1000.0],
+        )
+
+        quant_uptrend = QuantSignal(
+            symbol="BTCUSDT", timeframe="4h",
+            trend_regime=TrendRegime.UPTREND,
+            signals=["EMA bullish"], confidence=0.75, reasoning="Up",
+        )
+        quant_1d = QuantSignal(
+            symbol="BTCUSDT", timeframe="1d",
+            trend_regime=TrendRegime.DOWNTREND,
+            signals=["EMA bearish"], confidence=0.40, reasoning="Down",
+        )
+
+        buy_proposal = _make_proposal()
+        skip_proposal = SetupProposal(
+            symbol="BTCUSDT", timeframe="1d",
+            direction=SignalDirection.NEUTRAL, action=SetupAction.SKIP,
+            entry_zone_low=62_000.0, entry_zone_high=63_000.0,
+            stop_loss=60_500.0, take_profit=66_000.0,
+            reward_risk_ratio=2.0, rationale="Skip", confluence_factors=[],
+        )
+
+        # Quant returns different signals per timeframe
+        mock_quant = MagicMock()
+        mock_quant.run.side_effect = [quant_1d, quant_uptrend]
+
+        # Strategy: 1d returns skip, 4h returns buy
+        mock_strategy = MagicMock()
+        mock_strategy.run.side_effect = [skip_proposal, buy_proposal]
+
+        # RiskAgent should receive 0 proposals (1d skipped, 4h gated by MTF)
+        mock_risk = MagicMock()
+        mock_risk.run.return_value = []
+
+        patches, mocks = _build_patches(
+            snapshots=[snap_1d, snap_4h],
+        )
+        # Override quant/strategy/risk with our custom mocks
+        patches[f"{_PATCH_BASE}.QuantAgent"] = MagicMock(return_value=mock_quant)
+        patches[f"{_PATCH_BASE}.StrategyAgent"] = MagicMock(return_value=mock_strategy)
+        patches[f"{_PATCH_BASE}.RiskAgent"] = MagicMock(return_value=mock_risk)
+
+        ctx_managers = [patch(target, val) for target, val in patches.items()]
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            run_pipeline(dry_run=True)
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+        # The 4h BUY should have been blocked by MTF gate,
+        # so RiskAgent receives only the 1d skip proposal
+        risk_args = mock_risk.run.call_args[0][0]
+        # Only the 1d skip should pass through (4h buy gated)
+        assert all(p.timeframe == "1d" for p, _ in risk_args), (
+            f"Expected only 1d proposals, got: {[(p.timeframe, p.action.value) for p, _ in risk_args]}"
+        )
+
+    def test_4h_buy_passes_when_daily_ok(self):
+        """A 4h BUY should pass when 1d trend_score >= threshold."""
+        snap_1d = PairSnapshot(
+            symbol="BTCUSDT", timeframe="1d",
+            current_price=62_000.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.57),
+            recent_closes=[62_000.0], recent_volumes=[1000.0],
+        )
+        snap_4h = PairSnapshot(
+            symbol="BTCUSDT", timeframe="4h",
+            current_price=62_000.0, bar_timestamp=1_700_000_000_000,
+            indicators=TAIndicators(trend_score=0.71),
+            recent_closes=[62_000.0], recent_volumes=[1000.0],
+        )
+
+        quant_signal = QuantSignal(
+            symbol="BTCUSDT", timeframe="4h",
+            trend_regime=TrendRegime.UPTREND,
+            signals=["EMA bullish"], confidence=0.75, reasoning="Up",
+        )
+
+        buy_proposal = _make_proposal()
+
+        entries, mocks = _run_with_patches(
+            dry_run=True,
+            snapshots=[snap_1d, snap_4h],
+            quant_signal=quant_signal,
+            proposal=buy_proposal,
+        )
+        # Strategy should be called for both timeframes (4h not gated)
+        assert mocks["strategy"].run.call_count == 2
+
+
+class TestBTCCorrelationGuard:
+    """BTC-correlation guard limits alt signals when BTC is not approved."""
+
+    def test_btc_skip_caps_alts_to_2(self):
+        """When BTC proposal is skip, cap alt signals to 2.
+
+        run_pipeline() returns *all* RiskAgent entries (approved + rejected),
+        but the BTC-correlation guard filters the approved subset before
+        logging/posting.  We verify via SignalLogger.log call count.
+        """
+        btc_snap = PairSnapshot(
+            symbol="BTCUSDT", timeframe="1d", current_price=62000.0,
+            bar_timestamp=1_700_000_000_000, indicators=TAIndicators(),
+            recent_closes=[62000.0], recent_volumes=[1000.0],
+        )
+        alt_snaps = [
+            PairSnapshot(
+                symbol=sym, timeframe="1d", current_price=100.0,
+                bar_timestamp=1_700_000_000_000, indicators=TAIndicators(),
+                recent_closes=[100.0], recent_volumes=[500.0],
+            )
+            for sym in ["ETHUSDT", "SOLUSDT", "ADAUSDT", "DOTUSDT"]
+        ]
+
+        btc_proposal = SetupProposal(
+            symbol="BTCUSDT", timeframe="1d",
+            direction=SignalDirection.NEUTRAL, action=SetupAction.SKIP,
+            entry_zone_low=61000.0, entry_zone_high=62000.0,
+            stop_loss=59000.0, take_profit=66000.0,
+            reward_risk_ratio=2.0, rationale="No edge", confluence_factors=[],
+        )
+
+        mock_quant = MagicMock()
+        mock_quant.run.return_value = _make_quant_signal()
+
+        mock_strategy = MagicMock()
+        mock_strategy.run.side_effect = [btc_proposal] + [
+            SetupProposal(
+                symbol=sym, timeframe="1d",
+                direction=SignalDirection.LONG, action=SetupAction.BUY,
+                entry_zone_low=90.0, entry_zone_high=100.0,
+                stop_loss=85.0, take_profit=115.0,
+                reward_risk_ratio=2.0, rationale="Alt buy",
+                confluence_factors=["EMA support"],
+            )
+            for sym in ["ETHUSDT", "SOLUSDT", "ADAUSDT", "DOTUSDT"]
+        ]
+
+        alt_entries = [
+            _make_entry(
+                symbol=sym, timeframe="1d",
+                confidence_score=0.7 + i * 0.02,
+            )
+            for i, sym in enumerate(["ETHUSDT", "SOLUSDT", "ADAUSDT", "DOTUSDT"])
+        ]
+        mock_risk = MagicMock()
+        mock_risk.run.return_value = alt_entries
+
+        patches, mocks = _build_patches(
+            snapshots=[btc_snap] + alt_snaps,
+            entries=alt_entries,
+        )
+        patches[f"{_PATCH_BASE}.QuantAgent"] = MagicMock(return_value=mock_quant)
+        patches[f"{_PATCH_BASE}.StrategyAgent"] = MagicMock(return_value=mock_strategy)
+        patches[f"{_PATCH_BASE}.RiskAgent"] = MagicMock(return_value=mock_risk)
+
+        ctx_managers = [patch(target, val) for target, val in patches.items()]
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            # Run non-dry to hit DB/Discord path where caps matter
+            run_pipeline(dry_run=False)
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+        # BTC was skipped → correlation guard caps alts to 2
+        signal_logger = mocks["signal_logger"]
+        assert signal_logger.log.call_count <= 2
+
+        # Discord notifier received at most 2 entries
+        notifier = mocks["notifier"]
+        notifier.post.assert_called_once()
+        posted_entries = notifier.post.call_args[0][0]
+        assert len(posted_entries) <= 2
+
+
+class TestSignalCap:
+    """Signal cap limits daily output to max_daily_signals."""
+
+    def test_caps_to_configured_max(self):
+        """More approved signals than max_daily_signals should be capped."""
+        entries_8 = [
+            _make_entry(
+                symbol=f"PAIR{i}USDT",
+                confidence_score=0.65 + i * 0.02,
+            )
+            for i in range(8)
+        ]
+
+        patches, mocks = _build_patches(entries=entries_8)
+        snaps = [
+            PairSnapshot(
+                symbol=f"PAIR{i}USDT", timeframe="1d", current_price=100.0,
+                bar_timestamp=1_700_000_000_000, indicators=TAIndicators(),
+                recent_closes=[100.0], recent_volumes=[500.0],
+            )
+            for i in range(8)
+        ]
+        mock_builder = MagicMock()
+        mock_builder.build_universe.return_value = snaps
+        patches[f"{_PATCH_BASE}.SnapshotBuilder"] = MagicMock(return_value=mock_builder)
+
+        mock_quant = MagicMock()
+        mock_quant.run.return_value = _make_quant_signal()
+        patches[f"{_PATCH_BASE}.QuantAgent"] = MagicMock(return_value=mock_quant)
+
+        buy_proposal = _make_proposal()
+        mock_strategy = MagicMock()
+        mock_strategy.run.return_value = buy_proposal
+        patches[f"{_PATCH_BASE}.StrategyAgent"] = MagicMock(return_value=mock_strategy)
+
+        ctx_managers = [patch(target, val) for target, val in patches.items()]
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            with patch(f"{_PATCH_BASE}.load_risk_profile", return_value={"max_daily_signals": 5}):
+                run_pipeline(dry_run=False)
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+        # Discord notifier should receive at most 5 entries
+        notifier = mocks["notifier"]
+        notifier.post.assert_called_once()
+        posted_entries = notifier.post.call_args[0][0]
+        assert len(posted_entries) <= 5

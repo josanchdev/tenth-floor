@@ -149,6 +149,15 @@ def run_pipeline(
     # Track BTC's quant result for the correlation guard
     btc_approved = False
 
+    # ── 4a. Collect 1d trend scores for multi-timeframe gate ──────────
+    # A 4h BUY in a 1d downtrend is a lower-timeframe bounce trap.
+    # Require 1d trend_score >= 0.3 (at least "sideways") for 4h BUY.
+    _MTF_MIN_DAILY_SCORE = 0.3
+    daily_trend_scores: dict[str, float] = {}
+    for snap in snapshots:
+        if snap.timeframe == "1d" and snap.indicators.trend_score is not None:
+            daily_trend_scores[snap.symbol] = snap.indicators.trend_score
+
     for snap in snapshots:
         try:
             quant_signal = quant_agent.run(snap)
@@ -175,6 +184,22 @@ def run_pipeline(
                 proposal.action.value, proposal.direction.value,
                 proposal.reward_risk_ratio,
             )
+
+            # Multi-timeframe gate: 4h BUY requires 1d trend to be at least sideways.
+            # A 4h bounce in a 1d downtrend is a trap — skip it.
+            if (
+                proposal.action.value == "buy"
+                and snap.timeframe != "1d"
+                and snap.symbol in daily_trend_scores
+                and daily_trend_scores[snap.symbol] < _MTF_MIN_DAILY_SCORE
+            ):
+                logger.info(
+                    "MTF gate SKIP  %s %s  daily_score=%.2f < %.1f — "
+                    "4h bounce in daily downtrend",
+                    snap.symbol, snap.timeframe,
+                    daily_trend_scores[snap.symbol], _MTF_MIN_DAILY_SCORE,
+                )
+                continue
 
             # Volume confirmation gate: in downtrends, require above-average
             # volume on BUY proposals.  Low-volume "bounces" in downtrends
