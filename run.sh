@@ -106,7 +106,25 @@ DASHBOARD=false
 PASSTHROUGH_ARGS=()
 
 for arg in "$@"; do
-    if [[ "$arg" == "--outcomes-only" ]]; then
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        echo "Usage: ./run.sh [OPTIONS] [PAIRS...]"
+        echo ""
+        echo "Options:"
+        echo "  --dry-run         Run pipeline but skip DB + Discord"
+        echo "  --outcomes-only   Skip pipeline, just check outcomes"
+        echo "  --dashboard       Launch Streamlit admin dashboard (no vLLM)"
+        echo "  --reset-db        Wipe and recreate DB from schema.sql"
+        echo "  --profile PROF    Risk profile overlay (validation|production)"
+        echo "  -h, --help        Show this help message"
+        echo ""
+        echo "Examples:"
+        echo "  ./run.sh                           # full universe"
+        echo "  ./run.sh --profile validation      # use validation thresholds"
+        echo "  ./run.sh BTCUSDT ETHUSDT           # specific pairs"
+        echo "  ./run.sh --outcomes-only            # resolve pending signals"
+        echo "  ./run.sh --dashboard                # open admin dashboard"
+        exit 0
+    elif [[ "$arg" == "--outcomes-only" ]]; then
         OUTCOMES_ONLY=true
     elif [[ "$arg" == "--dashboard" ]]; then
         DASHBOARD=true
