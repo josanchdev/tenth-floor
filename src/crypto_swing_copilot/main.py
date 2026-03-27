@@ -138,9 +138,7 @@ def run_pipeline(
 
     # ── 4. Run agent pipeline per snapshot ──────────────────────────
     logger.info("Step 4/6: Running agent pipeline (%d snapshots)", len(snapshots))
-    quant_agent = QuantAgent()
     sentiment_agent = SentimentAgent()
-    strategy_agent = StrategyAgent()
 
     # SentimentAgent runs once on the shared snapshot
     try:
@@ -154,12 +152,6 @@ def run_pipeline(
         logger.exception("SentimentAgent failed — aborting pipeline")
         return []
 
-    # Trend-regime gate: reject setups where QuantAgent says strong_downtrend.
-    # Buying a death cross just because F&G is low is catching a falling knife.
-    # EXCEPTION: capitulation bypass — if F&G is extreme fear AND rising from
-    # its recent trough AND RSI divergence is present, let the pair through.
-    _REJECT_REGIMES = {TrendRegime.STRONG_DOWNTREND}
-
     # ── 4a. Capitulation detection ──────────────────────────────────
     # Check if Fear & Greed is in extreme fear AND rising from its trough.
     # This signals potential capitulation — exactly when contrarian trades
@@ -167,8 +159,6 @@ def run_pipeline(
     fg_trend = sentiment_snapshot.fear_greed_trend  # [most_recent, ..., oldest]
     fg_rising_from_extreme = False
     if len(fg_trend) >= 3 and fg_trend[0] < 25:
-        # F&G is currently extreme fear.  Check if it's rising from a
-        # recent trough: current value > minimum of the last 7 days.
         trough = min(fg_trend)
         if fg_trend[0] > trough and (fg_trend[0] - trough) >= 3:
             fg_rising_from_extreme = True
@@ -177,6 +167,57 @@ def run_pipeline(
                 "capitulation bypass ARMED",
                 fg_trend[0], trough,
             )
+
+    # ── 4b. Deterministic pre-filter ────────────────────────────────
+    # Skip LLM calls for pairs guaranteed to be rejected.  trend_score is
+    # deterministic (7-signal indicator agreement) and already computed.
+    # Any pair below min_setup_confidence will be rejected by RiskAgent,
+    # so burning GPU time on QuantAgent + StrategyAgent is waste.
+    risk_profile = load_risk_profile()
+    min_confidence = risk_profile.get("min_setup_confidence", 0.65)
+    _STRONG_DOWNTREND_SCORE = 0.15  # ≈ 0–1/7 bullish signals
+
+    llm_candidates = []
+    for snap in snapshots:
+        score = snap.indicators.trend_score
+        if score is not None and score < min_confidence:
+            if score <= _STRONG_DOWNTREND_SCORE:
+                # Would fail Gate 1 (trend regime) — check capitulation bypass
+                has_rsi_div = snap.indicators.rsi_divergence is True
+                if fg_rising_from_extreme and has_rsi_div:
+                    llm_candidates.append(snap)  # capitulation bypass — needs LLM
+                    logger.info(
+                        "Pre-filter PASS  %s  trend_score=%.2f — "
+                        "capitulation bypass (F&G rising + RSI div)",
+                        snap.symbol, score,
+                    )
+                else:
+                    funnel.killed_trend_gate += 1
+                    logger.info(
+                        "Pre-filter SKIP  %s  trend_score=%.2f — "
+                        "strong downtrend (no LLM needed)",
+                        snap.symbol, score,
+                    )
+            else:
+                # Below confidence threshold — RiskAgent would reject
+                funnel.killed_strategy_skip += 1
+                logger.info(
+                    "Pre-filter SKIP  %s  trend_score=%.2f < %.2f — "
+                    "below confidence threshold (no LLM needed)",
+                    snap.symbol, score, min_confidence,
+                )
+        else:
+            llm_candidates.append(snap)
+
+    logger.info(
+        "Pre-filter: %d/%d pairs need LLM evaluation (saved %d LLM call pairs)",
+        len(llm_candidates), len(snapshots),
+        len(snapshots) - len(llm_candidates),
+    )
+
+    # Trend-regime gate: reject setups where QuantAgent says strong_downtrend.
+    # Still checked as safety net for pairs that pass pre-filter.
+    _REJECT_REGIMES = {TrendRegime.STRONG_DOWNTREND}
 
     # Volume confirmation: contrarian LONGs in a downtrend require above-average
     # volume to confirm buyers are actually stepping in (not a slow bleed).
@@ -187,9 +228,8 @@ def run_pipeline(
     # Track BTC's quant result for the correlation guard
     btc_approved = False
 
-    # ── 4a. BTC relative strength baseline ────────────────────────────
+    # ── 4c. BTC relative strength baseline ────────────────────────────
     # Alts underperforming BTC in a fear environment are weak — skip them.
-    # Compute BTC's % change over the recent_closes window as the baseline.
     btc_pct_change: float | None = None
     for snap in snapshots:
         if snap.symbol == "BTCUSDT" and len(snap.recent_closes) >= 2:
@@ -198,7 +238,11 @@ def run_pipeline(
                 btc_pct_change = (newest - oldest) / oldest
             break
 
-    for snap in snapshots:
+    # ── 4d. LLM pipeline — only for qualifying pairs ────────────────
+    quant_agent = QuantAgent()
+    strategy_agent = StrategyAgent()
+
+    for snap in llm_candidates:
         try:
             quant_signal = quant_agent.run(snap)
             logger.info(
@@ -208,9 +252,7 @@ def run_pipeline(
                 snap.indicators.trend_score,
             )
 
-            # Gate: skip strong downtrends — no buying falling knives
-            # EXCEPTION: allow through when capitulation conditions are met
-            # (F&G rising from extreme fear + RSI divergence on this pair)
+            # Gate: skip strong downtrends — safety net for LLM disagreement
             if quant_signal.trend_regime in _REJECT_REGIMES:
                 has_rsi_div = snap.indicators.rsi_divergence is True
                 if fg_rising_from_extreme and has_rsi_div:
@@ -240,14 +282,11 @@ def run_pipeline(
             # Strategy gate: SKIP/HOLD actions don't proceed
             if proposal.action.value != "buy":
                 funnel.killed_strategy_skip += 1
+                continue
 
             # Volume confirmation gate: in downtrends, require above-average
-            # volume on BUY proposals.  Low-volume "bounces" in downtrends
-            # are traps — smart money stepping in shows up as volume surges.
-            if (
-                proposal.action.value == "buy"
-                and quant_signal.trend_regime in _VOLUME_CONFIRM_REGIMES
-            ):
+            # volume on BUY proposals.
+            if quant_signal.trend_regime in _VOLUME_CONFIRM_REGIMES:
                 vol_ratio = snap.indicators.volume_ratio
                 if vol_ratio is not None and vol_ratio < _MIN_VOLUME_RATIO:
                     logger.info(
@@ -259,11 +298,9 @@ def run_pipeline(
                     continue
 
             # Relative strength gate: in fear environments, skip alts that
-            # are underperforming BTC.  If BTC is down 5% and the alt is
-            # down 8%, money is rotating OUT — not a good long candidate.
+            # are underperforming BTC.
             if (
-                proposal.action.value == "buy"
-                and snap.symbol != "BTCUSDT"
+                snap.symbol != "BTCUSDT"
                 and btc_pct_change is not None
                 and sentiment_signal.bias.value in ("fear", "extreme_fear")
                 and len(snap.recent_closes) >= 2
@@ -288,7 +325,7 @@ def run_pipeline(
             proposals.append((proposal, score))
 
             # Track if BTC got a buy proposal
-            if snap.symbol == "BTCUSDT" and proposal.action.value == "buy":
+            if snap.symbol == "BTCUSDT":
                 btc_approved = True
 
         except Exception:
@@ -339,7 +376,6 @@ def run_pipeline(
     funnel.killed_btc_corr_gate = pre_corr_count - len(approved)
 
     # ── 5d. Signal cap — publish top N by confidence ──────────────────
-    risk_profile = load_risk_profile()
     max_signals = risk_profile.get("max_daily_signals", 5)
     pre_cap_count = len(approved)
     if len(approved) > max_signals:

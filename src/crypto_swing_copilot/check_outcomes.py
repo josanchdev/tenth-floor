@@ -147,7 +147,6 @@ def _process_signal(
     now = datetime.now(UTC)
 
     entry_high = signal["entry_high"]
-    entry_low = signal["entry_low"]
     stop_loss = signal["stop_loss"]
     take_profit = signal["take_profit"]
     status = signal["status"]

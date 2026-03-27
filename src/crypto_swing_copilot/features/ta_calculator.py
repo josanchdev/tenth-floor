@@ -54,13 +54,13 @@ def _safe_isnan(x):  # type: ignore[no-untyped-def]
 
 np.isnan = _safe_isnan
 
-import pandas as pd
+import pandas as pd  # noqa: E402
 import pandas_ta as ta  # noqa: F401, E402 — attaches .ta accessor to DataFrame
 
 # Restore original numpy.isnan so other code is unaffected.
 np.isnan = _orig_np_isnan
 
-from crypto_swing_copilot.data.models import TAIndicators
+from crypto_swing_copilot.data.models import TAIndicators  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

@@ -28,10 +28,10 @@ def _make_candles(
 ) -> pd.DataFrame:
     """Create a candles DataFrame from (open, high, low, close) tuples."""
     data = []
-    for i, (o, h, l, c) in enumerate(rows):
+    for i, (o, h, low, c) in enumerate(rows):
         data.append({
             "timestamp": start_ts + i * interval_ms,
-            "open": o, "high": h, "low": l, "close": c, "volume": 1000.0,
+            "open": o, "high": h, "low": low, "close": c, "volume": 1000.0,
         })
     return pd.DataFrame(data)
 

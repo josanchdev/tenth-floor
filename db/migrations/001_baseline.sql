@@ -1,0 +1,3 @@
+-- Baseline migration — no-op.
+-- schema.sql handles initial table creation via CREATE TABLE IF NOT EXISTS.
+-- This file exists so that fresh databases start at migration 001.

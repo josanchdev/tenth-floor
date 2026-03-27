@@ -61,7 +61,7 @@ class SignalLogger:
         logger.info("SignalLogger initialised  db=%s", self._db_path)
 
     def _apply_schema(self) -> None:
-        """Apply DDL from ``db/schema.sql``."""
+        """Apply DDL from ``db/schema.sql`` and run pending migrations."""
         schema_path = CONFIG_DIR.parent / "db" / "schema.sql"
         # Fallback: try project root
         if not schema_path.exists():
@@ -70,6 +70,53 @@ class SignalLogger:
             ddl = fh.read()
         self._conn.executescript(ddl)
         self._conn.commit()
+        self._run_migrations()
+
+    def _run_migrations(self) -> None:
+        """Apply any unapplied migrations from ``db/migrations/``.
+
+        Migrations are numbered SQL files (``001_name.sql``, ``002_name.sql``).
+        Applied migrations are tracked in a ``schema_migrations`` table.
+        """
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations ("
+            "  version TEXT PRIMARY KEY,"
+            "  applied_at TEXT NOT NULL"
+            ")"
+        )
+        self._conn.commit()
+
+        # Find migration files
+        migrations_dir = CONFIG_DIR.parent / "db" / "migrations"
+        if not migrations_dir.exists():
+            migrations_dir = PROJECT_ROOT / "db" / "migrations"
+        if not migrations_dir.exists():
+            return
+
+        applied = {
+            row[0]
+            for row in self._conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+
+        migration_files = sorted(migrations_dir.glob("*.sql"))
+        for mf in migration_files:
+            version = mf.stem  # e.g. "001_baseline"
+            if version in applied:
+                continue
+
+            logger.info("Applying migration: %s", version)
+            with open(mf, encoding="utf-8") as fh:
+                sql = fh.read()
+
+            if sql.strip() and not sql.strip().startswith("--"):
+                self._conn.executescript(sql)
+
+            self._conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+                (version, datetime.now(UTC).isoformat()),
+            )
+            self._conn.commit()
+            logger.info("Migration applied: %s", version)
 
     def log(
         self,

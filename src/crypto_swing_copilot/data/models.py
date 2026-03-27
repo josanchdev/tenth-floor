@@ -17,7 +17,7 @@ Design rules (from docs/v1_risks_and_constraints.md §2):
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # =====================================================================
 
 
-class TrendRegime(str, Enum):
+class TrendRegime(StrEnum):
     """Market trend classification produced by QuantAgent."""
 
     STRONG_UPTREND = "strong_uptrend"
@@ -36,7 +36,7 @@ class TrendRegime(str, Enum):
     STRONG_DOWNTREND = "strong_downtrend"
 
 
-class SignalDirection(str, Enum):
+class SignalDirection(StrEnum):
     """Directional bias for a trade setup."""
 
     LONG = "long"
@@ -44,7 +44,7 @@ class SignalDirection(str, Enum):
     NEUTRAL = "neutral"
 
 
-class SentimentBias(str, Enum):
+class SentimentBias(StrEnum):
     """Macro sentiment bias label from SentimentAgent."""
 
     EXTREME_GREED = "extreme_greed"
@@ -54,7 +54,7 @@ class SentimentBias(str, Enum):
     EXTREME_FEAR = "extreme_fear"
 
 
-class SetupAction(str, Enum):
+class SetupAction(StrEnum):
     """What kind of trade action the strategy proposes."""
 
     BUY = "buy"
@@ -63,7 +63,7 @@ class SetupAction(str, Enum):
     SKIP = "skip"
 
 
-class PlaybookVerdict(str, Enum):
+class PlaybookVerdict(StrEnum):
     """RiskAgent's final verdict on a setup."""
 
     APPROVED = "approved"

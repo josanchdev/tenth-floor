@@ -286,7 +286,7 @@ class TestPipelineFlow:
         for cm in ctx_managers:
             cm.start()
         try:
-            entries = run_pipeline()
+            run_pipeline()
         finally:
             for cm in ctx_managers:
                 cm.stop()
@@ -467,11 +467,11 @@ class TestRelativeStrengthGate:
 
     def test_weak_alt_skipped_in_fear(self):
         """Alt down more than BTC + fear sentiment → skip."""
-        # BTC down 5% over recent closes
+        # BTC down 5% over recent closes (trend_score high enough to pass pre-filter)
         btc_snap = PairSnapshot(
             symbol="BTCUSDT", timeframe="1d",
             current_price=57_000.0, bar_timestamp=1_700_000_000_000,
-            indicators=TAIndicators(trend_score=0.43),
+            indicators=TAIndicators(trend_score=0.71),
             recent_closes=[57_000.0, 58_000.0, 59_000.0, 60_000.0],  # -5%
             recent_volumes=[1000.0] * 4,
         )
@@ -479,7 +479,7 @@ class TestRelativeStrengthGate:
         alt_snap = PairSnapshot(
             symbol="SOLUSDT", timeframe="1d",
             current_price=90.0, bar_timestamp=1_700_000_000_000,
-            indicators=TAIndicators(trend_score=0.57),
+            indicators=TAIndicators(trend_score=0.71),
             recent_closes=[90.0, 94.0, 97.0, 100.0],  # -10%
             recent_volumes=[500.0] * 4,
         )
@@ -531,20 +531,23 @@ class TestRelativeStrengthGate:
             for cm in ctx_managers:
                 cm.stop()
 
-        # BTC skip passes through, SOL buy should be RS-gated
-        risk_args = mock_risk.run.call_args[0][0]
-        symbols = [p.symbol for p, _ in risk_args]
-        assert "SOLUSDT" not in symbols, (
-            f"SOLUSDT should have been RS-gated, got: {symbols}"
-        )
+        # BTC is SKIP (dropped at strategy gate), SOL is RS-gated.
+        # No proposals reach RiskAgent at all.
+        if mock_risk.run.call_args is not None:
+            risk_args = mock_risk.run.call_args[0][0]
+            symbols = [p.symbol for p, _ in risk_args]
+            assert "SOLUSDT" not in symbols, (
+                f"SOLUSDT should have been RS-gated, got: {symbols}"
+            )
+        # else: RiskAgent never called — both pairs correctly filtered
 
     def test_strong_alt_passes_in_fear(self):
         """Alt outperforming BTC in fear → passes."""
-        # BTC down 8%
+        # BTC down 8% (trend_score high enough to pass pre-filter)
         btc_snap = PairSnapshot(
             symbol="BTCUSDT", timeframe="1d",
             current_price=55_200.0, bar_timestamp=1_700_000_000_000,
-            indicators=TAIndicators(trend_score=0.29),
+            indicators=TAIndicators(trend_score=0.71),
             recent_closes=[55_200.0, 57_000.0, 59_000.0, 60_000.0],  # -8%
             recent_volumes=[1000.0] * 4,
         )
