@@ -88,7 +88,7 @@ significant GPU time on bearish days.
 - **Symbol format: `BTCUSDT`** (no slash). Normalised once at `MarketDataFetcher`. Every downstream module uses this format.
 - **1d timeframe only.** Pipeline analyses daily candles exclusively — no intraday noise.
 - **Max 2 signals per day** (production). Option B philosophy: silence is the default, only publish when the evidence is overwhelming.
-- **Structure-based price levels.** Entry zones anchored to swing lows (S/R), SL below structural support, TP at nearest resistance. ATR fallback when no S/R detected.
+- **Market-price entry, structure-based SL/TP.** Entry zone at/near current price (subscribers can act immediately). SL below nearest structural support, TP at nearest resistance. R:R computed from actual entry — weak setups (price far from support) are naturally killed by the R:R gate.
 - **Deterministic trend scoring.** 7-signal indicator agreement score (0–1) replaces LLM confidence for gating and conviction tiers. LLM confidence is fallback only.
 - **BTC relative strength filter.** In fear markets, alts underperforming BTC are skipped.
 - **R:R >= 2.0 enforced.** RiskAgent Rule 3 rejects proposals below `take_profit_rr_ratio`.
@@ -137,4 +137,5 @@ Resolved by `check_outcomes.py` via 4h candle walk. SL wins on same-candle ambig
 
 V2 is complete. V3 Tier 1 is complete — see [ROADMAP.md](ROADMAP.md) for the full plan.
 Tier 1 delivered: pipeline diagnostics/funnel, backtester, retry logic, stale prompt fixes, config profiles, failure alerting, capitulation bypass.
-Remaining V3: Langfuse prompt management, CI, richer sentiment, DB migrations.
+V3 Tier 1 also delivered: LLM short-circuit, 26-pair universe, sector diversity cap, DB migrations, CI, dynamic price precision, duplicate-safe Discord, market-price entries.
+Remaining V3: Langfuse prompt management, richer sentiment, structured logging.

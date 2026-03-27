@@ -228,15 +228,15 @@ class TestStrategyAgent:
 
 
 class TestComputePriceLevels:
-    """Test that _compute_price_levels anchors to structural S/R."""
+    """Test that _compute_price_levels uses market-price entry with structural SL/TP."""
 
     def _make_agent(self):
         with patch("crypto_swing_copilot.agents.strategy_agent.load_agent_config", return_value={}):
             from crypto_swing_copilot.agents.strategy_agent import StrategyAgent
             return StrategyAgent()
 
-    def test_entry_anchored_to_support(self) -> None:
-        """When a support level exists below price, entry_low should match it."""
+    def test_entry_at_market_price(self) -> None:
+        """Entry zone should be near current price, not anchored to support."""
         indicators = TAIndicators(
             ema_20=62000.0, ema_50=61500.0, ema_200=59000.0,
             rsi_14=55.0, macd_line=100.0, macd_signal=80.0, macd_histogram=20.0,
@@ -253,9 +253,10 @@ class TestComputePriceLevels:
         agent = self._make_agent()
         levels = agent._compute_price_levels(snap)
 
-        # Entry low should be the nearest support (61700), not spot - 0.5*ATR
-        assert levels["entry_zone_low"] == 61700.0
-        # SL should be below that support
+        # Entry high = spot price, entry low = spot - 0.25*ATR
+        assert levels["entry_zone_high"] == 62000.0
+        assert levels["entry_zone_low"] == pytest.approx(62000.0 - 500.0 * 0.25)
+        # SL should be below nearest support (61700)
         assert levels["stop_loss"] < 61700.0
         # TP should target resistance at 62800
         assert levels["take_profit"] == 62800.0
@@ -278,8 +279,8 @@ class TestComputePriceLevels:
         agent = self._make_agent()
         levels = agent._compute_price_levels(snap)
 
-        # Resistance is at 108, entry_mid around 99.25, SL around 97.
-        # R:R = (108-99.25)/(99.25-97) ≈ 3.9 — well above 2.0
+        # Entry_mid ≈ 99.625, SL below support 98.5 (≈ 97.6)
+        # R:R = (108-99.625)/(99.625-97.6) ≈ 4.1 — well above 2.0
         assert levels["take_profit"] == 108.0
         assert levels["reward_risk_ratio"] > 2.0
 
@@ -300,9 +301,9 @@ class TestComputePriceLevels:
         agent = self._make_agent()
         levels = agent._compute_price_levels(snap)
 
-        # Fallback: entry_high = price, entry_low = price - 0.5*ATR
+        # entry_high = price, entry_low = price - 0.25*ATR
         assert levels["entry_zone_high"] == 62000.0
-        assert levels["entry_zone_low"] == pytest.approx(62000.0 - 250.0)
+        assert levels["entry_zone_low"] == pytest.approx(62000.0 - 125.0)
         assert levels["reward_risk_ratio"] >= 2.0
 
     def test_rr_varies_with_structure(self) -> None:

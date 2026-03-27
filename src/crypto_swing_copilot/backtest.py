@@ -158,6 +158,7 @@ def _compute_price_levels(
     """Replicate StrategyAgent._compute_price_levels() without importing it.
 
     Kept self-contained so the backtester has zero LLM dependencies.
+    Entry at market price, SL below structural support, TP at resistance.
     """
     price = snapshot.current_price  # type: ignore[union-attr]
     ind = snapshot.indicators  # type: ignore[union-attr]
@@ -171,21 +172,16 @@ def _compute_price_levels(
     supports = ind.support_levels
     resistances = ind.resistance_levels
 
-    nearby_supports = [s for s in supports if s < price and (price - s) <= 1.5 * atr]
-
-    if nearby_supports:
-        anchor_support = nearby_supports[-1]
-        entry_low = round(anchor_support, decimals)
-        entry_high = round(min(price, anchor_support + atr * 0.5), decimals)
-    else:
-        entry_high = round(price, decimals)
-        entry_low = round(price - (atr * 0.5), decimals)
-
+    # Entry zone: anchored to current market price
+    entry_high = round(price, decimals)
+    entry_low = round(price - atr * 0.25, decimals)
     entry_mid = (entry_low + entry_high) / 2
 
+    # Stop-loss: below nearest structural support
+    nearby_supports = [s for s in supports if s < price]
     if nearby_supports:
         anchor_support = nearby_supports[-1]
-        stop_loss = round(anchor_support - atr * 0.5, decimals)
+        stop_loss = round(anchor_support - atr * 0.3, decimals)
     else:
         stop_loss = round(entry_mid - atr * sl_mult, decimals)
 
@@ -194,7 +190,8 @@ def _compute_price_levels(
         stop_loss = round(entry_mid - atr * sl_mult, decimals)
         actual_risk = entry_mid - stop_loss
 
-    above_resistances = [r for r in resistances if r > entry_mid]
+    # Take-profit: nearest resistance above price
+    above_resistances = [r for r in resistances if r > price]
 
     if above_resistances:
         candidate_tp = above_resistances[0]

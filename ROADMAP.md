@@ -26,7 +26,7 @@ V3 addresses three problems:
 
 *Get signals flowing. Know why they don't.*
 
-All 6 items implemented 2026-03-27. Additional improvements:
+All 6 items implemented 2026-03-27. Additional improvements delivered same day:
 - **RSI bullish divergence detection** added to `TACalculator` + `TAIndicators`
 - **Capitulation bypass** in Gate 1: F&G rising from extreme fear + RSI divergence
   allows `STRONG_DOWNTREND` pairs through (conservative — co-occurrence is rare)
@@ -36,6 +36,15 @@ All 6 items implemented 2026-03-27. Additional improvements:
   simulation + `--no-capitulation` flag
 - **Config profiles** validated via backtesting: thresholds 0.50–0.57 produce
   identical results (7-signal discrete steps), so validation profile uses 0.57
+- **LLM short-circuit**: pre-filter by `trend_score` before any LLM calls —
+  26 pairs cost 0 vLLM calls on bearish days
+- **26-pair universe** (was 13) with sector mapping + max 1 signal per sector
+- **DB migration system** (`db/migrations/` with numbered SQL files)
+- **GitHub Actions CI** (pytest + ruff + mypy, Python 3.11–3.13)
+- **Dynamic price precision** for sub-dollar coins (PEPE, ONDO)
+- **Duplicate-safe Discord posting** — re-runs don't double-post
+- **Market-price entries** — entry zone at current price (not support-anchored),
+  SL/TP remain structure-based. Weak setups naturally killed by R:R gate.
 
 ### 1.1 Pipeline Diagnostics & Funnel Report
 
@@ -166,7 +175,7 @@ human-readable logs.
 
 **Why:** Debug pipeline behaviour across weeks of runs.
 
-### 2.4 GitHub Actions CI
+### 2.4 GitHub Actions CI ✓
 
 Workflow running on every push:
 - `pytest` (all 144+ tests)
@@ -185,17 +194,11 @@ trafilatura. More headlines = richer context for SentimentAgent.
 
 **Why:** 80% of the value of a full news pipeline at 5% of the effort.
 
-### 2.6 DB Migration System
+### 2.6 DB Migration System ✓
 
-Versioned SQL migration files:
-```
-db/migrations/001_initial.sql
-db/migrations/002_pipeline_runs.sql
-db/migrations/003_...
-```
-
-Applied on startup with a `schema_version` table. Replaces the current
-`CREATE TABLE IF NOT EXISTS` approach.
+Versioned SQL migration files in `db/migrations/`, tracked in
+`schema_migrations` table, auto-applied on `SignalLogger` init.
+Catches duplicate-column errors for idempotency on fresh DBs.
 
 **Why:** Safe schema evolution without `--reset-db`.
 
@@ -252,7 +255,7 @@ These are documented but intentionally unaddressed in V3:
    for gating, but neither is validated against historical win rates.
    Revisit at 30+ closed trades.
 
-2. **No per-pair sentiment** — all 13 pairs share the same F&G value
+2. **No per-pair sentiment** — all 26 pairs share the same F&G value
    and risk narrative. No sector differentiation (BTC vs DeFi vs L1).
    Planned for V4.
 
@@ -272,6 +275,6 @@ V3 is complete when:
 - [x] `--profile` flag switches between validation/production configs
 - [x] Pipeline failures post error embed to Discord
 - [ ] At least one agent's prompt lives in Langfuse with hardcoded fallback
-- [ ] CI runs pytest + ruff + mypy on every push
+- [x] CI runs pytest + ruff + mypy on every push
 - [ ] Sentiment uses 4+ RSS feeds
-- [ ] DB migrations replace `CREATE TABLE IF NOT EXISTS`
+- [x] DB migrations replace `CREATE TABLE IF NOT EXISTS`

@@ -45,9 +45,8 @@ RULES:
 1. SPOT ONLY. direction="long" + action="buy", or direction="neutral" + action="skip".
 2. NEVER direction="short" or action="sell".
 3. Use the PRE-COMPUTED price levels exactly. Do NOT invent prices.
-4. Price levels are anchored to structural support/resistance (swing pivots).
-   The entry zone sits at a real support level. The SL is below that support.
-   The TP targets real resistance when available. R:R varies per setup.
+4. Entry zone is near current market price — subscribers can act immediately.
+   SL is below structural support. TP targets real resistance when available.
 
 PHILOSOPHY — SELECTIVE SWING TRADING:
 You are a professional analyst. Subscribers pay for quality, not quantity.
@@ -200,16 +199,16 @@ class StrategyAgent:
         return 8
 
     def _compute_price_levels(self, snapshot: PairSnapshot) -> dict:
-        """Compute entry zone, SL, and TP anchored to structural S/R levels.
+        """Compute entry zone, SL, and TP — entry at market, SL/TP structure-based.
 
         All arithmetic is done here in Python — the LLM receives these
         as pre-computed values and must use them exactly.
 
-        Priority:
-          1. Use detected swing lows (support) and swing highs (resistance)
-             from TACalculator to anchor entry, SL, and TP to real price
-             structure that other traders are watching.
-          2. Fall back to ATR-based formula when no suitable S/R is found.
+        Entry zone is anchored to current market price so subscribers can act
+        immediately.  SL sits below the nearest structural support (swing low).
+        TP targets the nearest resistance (swing high).  R:R is computed from
+        actual entry, so weak setups (price far from support) are naturally
+        killed by the R:R gate.
         """
         price = snapshot.current_price
         decimals = self._price_decimals(price)
@@ -220,55 +219,38 @@ class StrategyAgent:
         supports = snapshot.indicators.support_levels
         resistances = snapshot.indicators.resistance_levels
 
-        # --- Entry zone: anchor to nearest support below price ---
-        # Find supports that are below current price but within 1.5× ATR
-        # (too far = the support is irrelevant to this entry).
-        nearby_supports = [s for s in supports if s < price and (price - s) <= 1.5 * atr]
-
-        if nearby_supports:
-            # Use the highest nearby support as the entry anchor
-            anchor_support = nearby_supports[-1]  # sorted ascending, last = closest
-            entry_low = round(anchor_support, decimals)
-            entry_high = round(min(price, anchor_support + atr * 0.5), decimals)
-        else:
-            # Fallback: ATR-based pullback from spot
-            entry_high = round(price, decimals)
-            entry_low = round(price - (atr * 0.5), decimals)
-
+        # --- Entry zone: anchored to current market price ---
+        # Tight zone around spot — subscribers can act on the signal immediately.
+        entry_high = round(price, decimals)
+        entry_low = round(price - atr * 0.25, decimals)
         entry_mid = (entry_low + entry_high) / 2
 
-        # --- Stop-loss: below the support anchor (or ATR-based fallback) ---
+        # --- Stop-loss: below nearest structural support ---
+        nearby_supports = [s for s in supports if s < price]
         if nearby_supports:
-            # SL just below the structural support with ATR buffer
-            anchor_support = nearby_supports[-1]
-            stop_loss = round(anchor_support - atr * 0.5, decimals)
+            anchor_support = nearby_supports[-1]  # sorted ascending, closest to price
+            stop_loss = round(anchor_support - atr * 0.3, decimals)
         else:
             stop_loss = round(entry_mid - atr * sl_mult, decimals)
 
         actual_risk = entry_mid - stop_loss
         if actual_risk <= 0:
-            # Safety: if entry_mid <= stop_loss, fall back to ATR formula
             stop_loss = round(entry_mid - atr * sl_mult, decimals)
             actual_risk = entry_mid - stop_loss
 
         # --- Take-profit: anchor to nearest resistance above price ---
-        # Find resistances above entry_mid.
-        above_resistances = [r for r in resistances if r > entry_mid]
+        above_resistances = [r for r in resistances if r > price]
 
         if above_resistances:
-            # Use the nearest resistance as TP
             candidate_tp = above_resistances[0]  # sorted ascending, first = closest
             candidate_rr = (candidate_tp - entry_mid) / actual_risk if actual_risk > 0 else 0
 
             if candidate_rr >= min_rr:
-                # Great — natural R:R meets minimum
                 take_profit = round(candidate_tp, decimals)
             else:
-                # Resistance is too close; use min R:R to set TP
                 take_profit = round(entry_mid + actual_risk * min_rr, decimals)
         else:
-            # No resistance found; use min R:R
-            take_profit = round(entry_mid + actual_risk * min_rr, 2)
+            take_profit = round(entry_mid + actual_risk * min_rr, decimals)
 
         # --- Final R:R ---
         reward = take_profit - entry_mid
@@ -317,7 +299,7 @@ STRUCTURAL SUPPORT/RESISTANCE (detected swing pivots):
 - Support levels: {', '.join(f'{s:.2f}' for s in snapshot.indicators.support_levels) or 'none detected'}
 - Resistance levels: {', '.join(f'{r:.2f}' for r in snapshot.indicators.resistance_levels) or 'none detected'}
 
-PRE-COMPUTED PRICE LEVELS (anchored to S/R — use these exact values in your response):
+PRE-COMPUTED PRICE LEVELS (entry at market, SL/TP structure-based — use these exact values):
 - Entry zone: {price_levels['entry_zone_low']:.2f} – {price_levels['entry_zone_high']:.2f}
 - Stop-loss: {price_levels['stop_loss']:.2f}
 - Take-profit: {price_levels['take_profit']:.2f}
