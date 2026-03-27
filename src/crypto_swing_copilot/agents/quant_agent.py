@@ -62,6 +62,7 @@ SIGNAL LABELS (include all that apply from this list):
 - "Price below 200 EMA"
 - "RSI oversold (< 30)"
 - "RSI overbought (> 70)"
+- "RSI bullish divergence"
 - "MACD bullish crossover"
 - "MACD bearish crossover"
 - "Bollinger Band squeeze"
@@ -80,10 +81,16 @@ OUTPUT FORMAT:
   "reasoning": "<2-3 sentences explaining the classification>"
 }
 
+NOTE ON CONFIDENCE:
+Your confidence score is informational context for the LLM reasoning summary.
+The pipeline's actual gating/conviction decisions use a deterministic trend_score
+computed by Python (7-signal indicator agreement, 0–1). Your confidence value
+does NOT control whether the signal is published.
+
 EXAMPLE:
 {
   "symbol": "ETHUSDT",
-  "timeframe": "4h",
+  "timeframe": "1d",
   "trend_regime": "uptrend",
   "signals": ["Price above 200 EMA", "MACD bullish crossover", "Volume surge above SMA"],
   "confidence": 0.74,
@@ -124,6 +131,8 @@ class QuantAgent:
             max_output_tokens=self._config.get("max_output_tokens", 1024),
             provider=self._config.get("provider", "openai"),
             base_url=self._config.get("base_url", "http://localhost:8000/v1"),
+            timeout=self._config.get("timeout", 30.0),
+            max_retries=self._config.get("max_retries", 3),
         )
 
         signal = parse_json_response(raw, QuantSignal)
@@ -162,6 +171,8 @@ TECHNICAL INDICATORS:
 - ATR 14: {ind.atr_14}
 - OBV: {ind.obv}
 - Volume SMA 20: {ind.volume_sma_20}
+- Volume Ratio (latest / SMA 20): {ind.volume_ratio}
+- RSI Bullish Divergence: {ind.rsi_divergence}
 
 RECENT CLOSES (newest first): [{closes_str}]
 """

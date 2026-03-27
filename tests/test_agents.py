@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from crypto_swing_copilot.data.models import (
     PairSnapshot,
-    PlaybookEntry,
     PlaybookVerdict,
     QuantSignal,
     SentimentBias,
@@ -21,7 +20,6 @@ from crypto_swing_copilot.data.models import (
     TAIndicators,
     TrendRegime,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

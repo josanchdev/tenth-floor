@@ -19,7 +19,7 @@ Usage::
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -144,7 +144,7 @@ def _process_signal(
     """
     created_at = datetime.fromisoformat(signal["created_at"])
     created_ts = int(created_at.timestamp() * 1000)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     entry_high = signal["entry_high"]
     entry_low = signal["entry_low"]
@@ -177,7 +177,7 @@ def _process_signal(
     for row in df.itertuples(index=False):
         candle_low = row.low
         candle_high = row.high
-        candle_ts = datetime.fromtimestamp(row.timestamp / 1000, tz=timezone.utc)
+        candle_ts = datetime.fromtimestamp(row.timestamp / 1000, tz=UTC)
 
         if status == "PENDING":
             # Check if price entered entry zone
@@ -280,7 +280,7 @@ def _cli_main() -> None:
 
     summary = check_outcomes(dry_run=dry_run)
 
-    console.print(f"\n[bold]Results:[/bold]")
+    console.print("\n[bold]Results:[/bold]")
     console.print(f"  Checked:  {summary['checked']}")
     console.print(f"  Entered:  {summary['entered']}")
     console.print(f"  TP hit:   {summary['tp_hit']}")

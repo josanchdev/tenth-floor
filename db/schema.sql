@@ -37,3 +37,23 @@ CREATE TABLE IF NOT EXISTS signals (
     -- Re-running the pipeline is safe: the second insert is silently skipped.
     UNIQUE(pair, timeframe, report_date)
 );
+
+-- Pipeline funnel diagnostics — one row per daily run.
+-- Tracks how many pairs were killed at each gate, enabling threshold tuning.
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    run_date                 TEXT PRIMARY KEY,       -- YYYY-MM-DD
+    created_at               TEXT NOT NULL,           -- ISO timestamp (UTC)
+    pairs_analyzed           INTEGER NOT NULL DEFAULT 0,
+    killed_trend_gate        INTEGER NOT NULL DEFAULT 0,
+    killed_strategy_skip     INTEGER NOT NULL DEFAULT 0,
+    killed_volume_gate       INTEGER NOT NULL DEFAULT 0,
+    killed_rs_gate           INTEGER NOT NULL DEFAULT 0,
+    killed_confidence_gate   INTEGER NOT NULL DEFAULT 0,
+    killed_rr_gate           INTEGER NOT NULL DEFAULT 0,
+    killed_btc_corr_gate     INTEGER NOT NULL DEFAULT 0,
+    killed_signal_cap        INTEGER NOT NULL DEFAULT 0,
+    proposals_generated      INTEGER NOT NULL DEFAULT 0,
+    approved                 INTEGER NOT NULL DEFAULT 0,
+    published                INTEGER NOT NULL DEFAULT 0,
+    profile                  TEXT                     -- 'validation', 'production', or NULL
+);

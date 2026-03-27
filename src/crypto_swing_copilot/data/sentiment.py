@@ -26,7 +26,7 @@ import json
 import logging
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Final
 
 import feedparser
@@ -203,7 +203,7 @@ class SentimentFetcher:
                         from calendar import timegm
 
                         ts = timegm(published_parsed)
-                        published_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                        published_dt = datetime.fromtimestamp(ts, tz=UTC)
                     except (TypeError, ValueError, OverflowError):
                         pass
 

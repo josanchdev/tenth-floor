@@ -14,7 +14,6 @@ from crypto_swing_copilot.data.models import (
 )
 from crypto_swing_copilot.features.pair_snapshot import SnapshotBuilder
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

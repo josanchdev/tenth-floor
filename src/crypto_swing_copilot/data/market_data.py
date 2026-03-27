@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
@@ -333,7 +333,7 @@ class MarketDataFetcher:
                 symbol,
                 timeframe,
                 since,
-                datetime.fromtimestamp(since / 1000, tz=timezone.utc).isoformat(),
+                datetime.fromtimestamp(since / 1000, tz=UTC).isoformat(),
             )
 
         new_bars = self._fetch_raw(symbol, timeframe, since=since)
@@ -362,10 +362,10 @@ class MarketDataFetcher:
             timeframe,
             len(df),
             datetime.fromtimestamp(
-                int(df["timestamp"].iloc[0]) / 1000, tz=timezone.utc
+                int(df["timestamp"].iloc[0]) / 1000, tz=UTC
             ).strftime("%Y-%m-%d"),
             datetime.fromtimestamp(
-                int(df["timestamp"].iloc[-1]) / 1000, tz=timezone.utc
+                int(df["timestamp"].iloc[-1]) / 1000, tz=UTC
             ).strftime("%Y-%m-%d %H:%M"),
         )
 
@@ -429,10 +429,10 @@ class MarketDataFetcher:
             info["rows"] = len(df)
             if not df.empty:
                 info["first_ts"] = datetime.fromtimestamp(
-                    int(df["timestamp"].iloc[0]) / 1000, tz=timezone.utc
+                    int(df["timestamp"].iloc[0]) / 1000, tz=UTC
                 ).isoformat()
                 info["last_ts"] = datetime.fromtimestamp(
-                    int(df["timestamp"].iloc[-1]) / 1000, tz=timezone.utc
+                    int(df["timestamp"].iloc[-1]) / 1000, tz=UTC
                 ).isoformat()
                 info["size_kb"] = round(path.stat().st_size / 1024, 1)
         return info

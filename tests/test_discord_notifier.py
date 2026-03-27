@@ -21,7 +21,6 @@ from crypto_swing_copilot.notifications.discord_notifier import (
     DiscordNotifier,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

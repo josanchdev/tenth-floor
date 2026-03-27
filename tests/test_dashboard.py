@@ -7,7 +7,6 @@ Streamlit dependency).  An in-memory SQLite DB is used — no disk I/O.
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pandas as pd

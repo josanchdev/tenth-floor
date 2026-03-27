@@ -102,6 +102,8 @@ class SentimentAgent:
             max_output_tokens=self._config.get("max_output_tokens", 512),
             provider=self._config.get("provider", "openai"),
             base_url=self._config.get("base_url", "http://localhost:8000/v1"),
+            timeout=self._config.get("timeout", 30.0),
+            max_retries=self._config.get("max_retries", 3),
         )
 
         signal = parse_json_response(raw, SentimentSignal)

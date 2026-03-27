@@ -64,21 +64,29 @@ CRITICAL RULES:
 STRONG TECHNICALS (need 2+ to BUY):
 - Price holding above EMA 50 or EMA 200 (actual support, not just nearby)
 - RSI 35-65 with bullish divergence or turning up from oversold
+- RSI bullish divergence (price lower-low but RSI higher-low) — strong reversal signal
 - MACD histogram narrowing or crossing bullish
 - Volume above SMA on green candles
 - Price bouncing off BB lower with confirmation (not just touching it)
 - QuantAgent confidence >= 0.65
 
+CAPITULATION SETUPS:
+When Fear & Greed is in extreme fear AND rising from its recent trough, the market may be
+at a capitulation bottom. In this context, death crosses and price-below-all-EMAs are LESS
+bearish — the worst may already be priced in. Look for: RSI bullish divergence, price at
+multi-month support, volume exhaustion (spike on sell-off then quiet holding). These setups
+are rare but high-edge. Still require 2+ strong technicals — do not buy fear alone.
+
 WEAK TECHNICALS (SKIP if 2+ present):
-- Price below ALL EMAs (no structural support)
+- Price below ALL EMAs (no structural support) — unless capitulation setup
 - Death cross (EMA 20 < 50) with accelerating separation
-- RSI < 35 and still falling
+- RSI < 35 and still falling (no divergence)
 - MACD deeply negative with expanding histogram
 - Declining volume on bounces
 - QuantAgent confidence < 0.60
 
 CONFLUENCE FACTORS (select only those that genuinely apply):
-"EMA alignment", "EMA support", "RSI momentum", "MACD confirmation", "Volume support", "Bollinger support", "Contrarian sentiment", "Sentiment tailwind", "Mean reversion setup"
+"EMA alignment", "EMA support", "RSI momentum", "RSI divergence", "MACD confirmation", "Volume support", "Bollinger support", "Contrarian sentiment", "Sentiment tailwind", "Mean reversion setup", "Capitulation reversal"
 
 RATIONALE GUIDELINES:
 - Write 2-3 sentences unique to THIS pair and timeframe.
@@ -89,7 +97,7 @@ RATIONALE GUIDELINES:
 OUTPUT: {"symbol":"..","timeframe":"..","direction":"long|neutral","action":"buy|skip|hold","entry_zone_low":N,"entry_zone_high":N,"stop_loss":N,"take_profit":N,"reward_risk_ratio":N,"rationale":"2-3 specific sentences","confluence_factors":["..."]}
 
 EXAMPLE (BUY — clear edge):
-{"symbol":"SOLUSDT","timeframe":"4h","direction":"long","action":"buy","entry_zone_low":119.40,"entry_zone_high":120.60,"stop_loss":115.40,"take_profit":128.60,"reward_risk_ratio":2.10,"rationale":"SOL holding EMA 200 at 118.50 as support after 3 failed breakdowns. RSI at 42 turning up from 38 with MACD histogram narrowing from -0.8 to -0.2 over 4 bars. Volume on last green candle 1.3x SMA — buyers stepping in at this level.","confluence_factors":["EMA support","RSI momentum","MACD confirmation","Volume support"]}
+{"symbol":"SOLUSDT","timeframe":"1d","direction":"long","action":"buy","entry_zone_low":119.40,"entry_zone_high":120.60,"stop_loss":115.40,"take_profit":128.60,"reward_risk_ratio":2.10,"rationale":"SOL holding EMA 200 at 118.50 as support after 3 failed breakdowns. RSI at 42 turning up from 38 with MACD histogram narrowing from -0.8 to -0.2 over 4 bars. Volume on last green candle 1.3x SMA — buyers stepping in at this level.","confluence_factors":["EMA support","RSI momentum","MACD confirmation","Volume support"]}
 
 EXAMPLE (SKIP — no edge):
 {"symbol":"APTUSDT","timeframe":"1d","direction":"neutral","action":"skip","entry_zone_low":5.97,"entry_zone_high":6.03,"stop_loss":5.50,"take_profit":7.09,"reward_risk_ratio":2.00,"rationale":"Death cross with EMA 20 at 6.10 pulling away from EMA 50 at 6.80. Price below all EMAs, RSI 28 and still falling. No structural support — falling knife.","confluence_factors":[]}
@@ -140,6 +148,8 @@ class StrategyAgent:
             max_output_tokens=self._config.get("max_output_tokens", 2048),
             provider=self._config.get("provider", "openai"),
             base_url=self._config.get("base_url", "http://localhost:8000/v1"),
+            timeout=self._config.get("timeout", 30.0),
+            max_retries=self._config.get("max_retries", 3),
         )
 
         proposal = parse_json_response(raw, SetupProposal)

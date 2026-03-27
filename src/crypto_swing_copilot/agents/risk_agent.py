@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from langfuse import observe
 
@@ -93,7 +93,7 @@ class RiskAgent:
         list[PlaybookEntry]
             Final vetted entries for the daily playbook, sorted by rank.
         """
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         entries: list[PlaybookEntry] = []
 
         for rank, (proposal, confidence) in enumerate(proposals, 1):
@@ -212,6 +212,8 @@ class RiskAgent:
                 max_output_tokens=self._config.get("max_output_tokens", 512),
                 provider=self._config.get("provider", "openai"),
                 base_url=self._config.get("base_url", "http://localhost:8000/v1"),
+                timeout=self._config.get("timeout", 30.0),
+                max_retries=self._config.get("max_retries", 3),
             )
 
             # Parse reasoning — handle both list and single-object responses

@@ -18,6 +18,7 @@ env/
 # Data & reports (large, regenerated) — anchored to project root
 /data/
 /reports/
+/logs/
 positions_template.json
 
 # SQLite database (regenerated at runtime; schema is in db/schema.sql)

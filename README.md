@@ -35,6 +35,8 @@ diagram with Mermaid flowchart.
 
 ## Project Status
 
+### V2 (complete)
+
 | Layer | Status |
 |---|---|
 | Data layer (market data, sentiment, models) | Complete |
@@ -42,13 +44,28 @@ diagram with Mermaid flowchart.
 | Agent layer (Quant, Sentiment, Strategy, Risk) | Complete |
 | LLM backend (local Qwen3 32B AWQ via vLLM) | Complete |
 | SQLite signal logger + outcome checker | Complete |
-| Discord webhook notifier | Complete |
+| Discord webhook notifier + outcome notifications | Complete |
 | Daily orchestrator (`main.py`) | Complete |
 | Admin dashboard (Streamlit) | Complete |
 | Structure-based S/R price levels | Complete |
-| Deterministic trend scoring | Complete |
+| Deterministic trend scoring (7-signal agreement) | Complete |
 | BTC relative strength filter | Complete |
-| Discord outcome notifications | Complete |
+
+### V3 (in progress)
+
+| Layer | Status |
+|---|---|
+| Pipeline diagnostics & funnel report | Planned |
+| Historical replay / backtester | Planned |
+| LLM retry logic + timeout config | Planned |
+| Config profiles (validation / production) | Planned |
+| Failure alerting (Discord error embeds) | Planned |
+| Langfuse prompt management | Planned |
+| GitHub Actions CI | Planned |
+| Richer sentiment (more RSS feeds) | Planned |
+| DB migration system | Planned |
+
+See [ROADMAP.md](ROADMAP.md) for the full V3 plan.
 
 **144 tests** across 9 files. All mocked — no network calls, no LLM
 server required.
@@ -104,7 +121,7 @@ cp .env.example .env
 ### Run the pipeline
 
 ```bash
-# Full universe (13 pairs, daily timeframe)
+# Full universe (13 pairs, 1d timeframe)
 python -m crypto_swing_copilot.main
 
 # Specific pairs
@@ -202,10 +219,10 @@ crypto-swing-copilot/
 │   ├── notifications/
 │   │   └── discord_notifier.py # Discord webhook poster
 │   └── check_outcomes.py      # Standalone TP/SL resolution
-├── tests/                     # 144 unit tests, all mocked
-├── VISION.md                  # Product brief and V2 pivot spec
-├── HANDOFF.md                 # Developer handoff with full status
-└── KNOWN_LIMITATIONS.md       # Documented deferred items
+├── tests/                     # Unit tests, all mocked
+├── VISION.md                  # Product vision and design principles
+├── ROADMAP.md                 # V3 implementation plan
+└── research.md                # Tool research notes
 ```
 
 ---

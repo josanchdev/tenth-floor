@@ -46,14 +46,26 @@ def get_langfuse() -> Langfuse:
     return _langfuse
 
 
-def _get_openai_client(base_url: str) -> OpenAI:
-    """Return a cached OpenAI client for the given base URL."""
-    if base_url not in _openai_clients:
-        _openai_clients[base_url] = OpenAI(
+def _get_openai_client(
+    base_url: str,
+    *,
+    max_retries: int = 3,
+    timeout: float = 30.0,
+) -> OpenAI:
+    """Return a cached OpenAI client for the given base URL.
+
+    The client is keyed by ``(base_url, max_retries, timeout)`` so that
+    different retry/timeout settings get their own instance.
+    """
+    cache_key = f"{base_url}|{max_retries}|{timeout}"
+    if cache_key not in _openai_clients:
+        _openai_clients[cache_key] = OpenAI(
             base_url=base_url,
             api_key=os.environ.get("OPENAI_API_KEY", "not-needed"),
+            max_retries=max_retries,
+            timeout=timeout,
         )
-    return _openai_clients[base_url]
+    return _openai_clients[cache_key]
 
 
 def _load_models_config() -> dict:
@@ -89,11 +101,43 @@ def load_agent_config(agent_name: str) -> dict:
     return {**defaults, **agent_cfg}
 
 
-def load_risk_profile() -> dict:
-    """Load ``config/risk_profile.json``."""
+# Active profile name — set by CLI via set_active_profile(), read by load_risk_profile().
+_active_profile: str | None = None
+
+
+def set_active_profile(name: str | None) -> None:
+    """Set the active config profile (e.g. ``"validation"`` or ``"production"``)."""
+    global _active_profile
+    _active_profile = name
+
+
+def load_risk_profile(profile: str | None = None) -> dict:
+    """Load ``config/risk_profile.json``, optionally overlaid with a profile.
+
+    Profile files live in ``config/profiles/{name}.json`` and override
+    keys from the base ``risk_profile.json``.  Resolution order:
+
+    1. Explicit ``profile`` argument (highest priority)
+    2. Module-level ``_active_profile`` set by :func:`set_active_profile`
+    3. ``RISK_PROFILE`` environment variable
+    4. No profile — use base config as-is
+    """
     path = CONFIG_DIR / "risk_profile.json"
     with open(path, encoding="utf-8") as fh:
-        return json.load(fh)
+        base = json.load(fh)
+
+    name = profile or _active_profile or os.environ.get("RISK_PROFILE")
+    if name:
+        profile_path = CONFIG_DIR / "profiles" / f"{name}.json"
+        if profile_path.exists():
+            with open(profile_path, encoding="utf-8") as fh:
+                overrides = json.load(fh)
+            base.update(overrides)
+            logger.info("Risk profile: base + %s overlay", name)
+        else:
+            raise FileNotFoundError(f"Profile not found: {profile_path}")
+
+    return base
 
 
 def call_llm(
@@ -107,6 +151,8 @@ def call_llm(
     provider: str = "openai",
     base_url: str = "http://localhost:8000/v1",
     json_mode: bool = True,
+    timeout: float = 30.0,
+    max_retries: int = 3,
 ) -> str:
     """Call an LLM and return the raw text response.
 
@@ -134,6 +180,10 @@ def call_llm(
         API base URL.  Overridden by ``LLM_BASE_URL`` env var if set.
     json_mode:
         If True, request JSON output format from the provider.
+    timeout:
+        Request timeout in seconds.  Covers slow vLLM cold-starts.
+    max_retries:
+        Number of retries on transient failures (502, timeout, etc.).
 
     Returns
     -------
@@ -152,6 +202,8 @@ def call_llm(
             max_output_tokens=max_output_tokens,
             base_url=base_url,
             json_mode=json_mode,
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
     raise ValueError(f"Unknown LLM provider: {provider!r}. Supported: 'openai'.")
@@ -167,9 +219,11 @@ def _call_openai_compat(
     max_output_tokens: int,
     base_url: str,
     json_mode: bool,
+    timeout: float = 30.0,
+    max_retries: int = 3,
 ) -> str:
     """Call an OpenAI-compatible API (vLLM, Ollama, OpenAI, etc.)."""
-    client = _get_openai_client(base_url)
+    client = _get_openai_client(base_url, max_retries=max_retries, timeout=timeout)
 
     logger.info(
         "Calling LLM  agent=%s  model=%s  base_url=%s  temp=%.2f",

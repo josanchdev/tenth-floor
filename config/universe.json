@@ -12,12 +12,10 @@
     "AVAXUSDT",
     "DOTUSDT",
     "LINKUSDT",
-    "MATICUSDT",
     "UNIUSDT",
     "ATOMUSDT",
     "LTCUSDT",
-    "NEARUSDT",
-    "APTUSDT"
+    "NEARUSDT"
   ],
-  "_comment": "15 major spot pairs on Binance. All read-only. No futures, no margin."
+  "_comment": "13 major spot pairs on Binance. All read-only. No futures, no margin."
 }

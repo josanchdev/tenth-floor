@@ -11,13 +11,15 @@ This document defines exactly what a signal is, how it is produced, and how it i
 | Confidence | Tier | Suggested risk |
 |---|---|---|
 | ≥ 0.80 | `high` | 2% of portfolio |
-| ≥ 0.55 | `standard` | 1% of portfolio |
-| < 0.55 | — | Signal dropped, not published |
+| ≥ 0.65 | `standard` | 1% of portfolio |
+| < min_setup_confidence | — | Signal dropped, not published |
 
-> Thresholds lowered from 0.65 to 0.55 pre-calibration. Will tighten
-> at V2.1 when 30+ closed trades provide real data for calibration.
-
-The confidence score is LLM-generated (Qwen3 32B) from indicator consensus. It is a policy input, not a statistically calibrated probability. See [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md#2-quantagent-confidence-score-is-not-statistically-calibrated).
+> The gating confidence comes from Python's deterministic `trend_score`
+> (7-signal indicator agreement, 0–1). LLM-generated confidence is
+> fallback only when `trend_score` is unavailable.
+>
+> `min_setup_confidence` defaults to 0.65 (production).
+> Validation mode uses 0.57. See `config/profiles/`.
 
 ---
 
@@ -28,7 +30,7 @@ Each approved signal is a `PlaybookEntry` (defined in `data/models.py`):
 | Field | Type | Description |
 |---|---|---|
 | `symbol` | `str` | Trading pair, e.g. `BTCUSDT` |
-| `timeframe` | `str` | Candle timeframe, e.g. `4h` or `1d` |
+| `timeframe` | `str` | Candle timeframe: `1d` (pipeline is daily only) |
 | `report_date` | `str` | ISO date of the daily run |
 | `verdict` | `PlaybookVerdict` | `APPROVED` or `REJECTED` |
 | `verdict_reasoning` | `str` | Why the signal was approved or rejected |
@@ -52,8 +54,8 @@ Each approved signal is a `PlaybookEntry` (defined in `data/models.py`):
 Price levels are computed by `StrategyAgent._compute_price_levels()` before the LLM is called. The LLM receives them and must use them verbatim.
 
 ```
-entry_zone_low   = price × 0.995          # ±0.5% around spot (see KNOWN_LIMITATIONS §1)
-entry_zone_high  = price × 1.005
+entry_zone_low   = nearest swing low (support within 1.5×ATR of price)
+entry_zone_high  = entry_zone_low × 1.01  # tight zone around support
 entry_mid        = (entry_low + entry_high) / 2
 stop_loss        = entry_mid − (ATR_14 × stop_loss_atr_multiplier)
 take_profit      = entry_mid + (actual_risk × take_profit_rr_ratio)
@@ -83,7 +85,52 @@ Parameters are set in `config/risk_profile.json`:
 | `"Strategy action is skip"` | `action == SKIP` |
 | `"Strategy action is hold"` | `action == HOLD` |
 | `"R:R {x} below minimum {2.0} – skipping"` | `reward_risk_ratio < take_profit_rr_ratio` |
-| `"Confidence {x} below minimum {0.55} – skipping"` | `confidence < min_setup_confidence` |
+| `"Confidence {x} below minimum {min_setup_confidence} – skipping"` | `confidence < min_setup_confidence` |
+
+---
+
+## RSI Bullish Divergence
+
+`TACalculator._detect_rsi_divergence()` scans the last 30 daily bars for
+bullish divergence: price makes a lower low but RSI makes a higher low.
+
+Detection algorithm:
+1. Find swing lows in price (local minima with 5-bar window)
+2. Find swing lows in RSI at the same bar indices
+3. If the most recent price low is lower than a prior low, but the
+   corresponding RSI low is higher — bullish divergence is confirmed
+
+The result is stored as `TAIndicators.rsi_divergence: bool | None`.
+It is `True` when divergence is detected, `None` when insufficient
+swing lows exist in the lookback window, and `False` otherwise.
+
+Used by: QuantAgent (reported as a signal), StrategyAgent (counted as a
+STRONG TECHNICAL and CONFLUENCE FACTOR), Gate 1 capitulation bypass.
+
+---
+
+## Capitulation Bypass (Gate 1)
+
+Gate 1 (trend regime) normally kills all pairs in `STRONG_DOWNTREND`.
+The capitulation bypass allows a pair through when two conditions are met:
+
+1. **F&G rising from extreme fear**: Fear & Greed index is < 25 AND
+   current value is rising from its 7-day trough (delta >= 3 points)
+2. **RSI bullish divergence** on the specific pair
+
+When both conditions hold, the pair bypasses Gate 1 and proceeds to
+the remaining gates. This targets capitulation bottoms — exactly when
+contrarian trades have the most edge.
+
+The bypass is deliberately conservative:
+- F&G direction (rising) matters more than level alone
+- RSI divergence must be present on the specific pair, not just market-wide
+- The pair must still pass all subsequent gates (strategy, confidence, R:R)
+
+Backtesting (90 days, Dec 2025 – Mar 2026) shows the bypass triggers
+rarely: 1 pair-day bypassed despite 64/90 days in extreme fear and 35
+days with F&G rising. This is expected — the co-occurrence of extreme
+fear + RSI divergence on a strong-downtrend pair is structurally rare.
 
 ---
 

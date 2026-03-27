@@ -12,6 +12,8 @@ defaults:
   provider: openai
   base_url: http://localhost:8000/v1    # vLLM server
   model: Qwen/Qwen3-32B-AWQ
+  timeout: 30.0                          # seconds; covers slow vLLM cold-starts
+  max_retries: 3                         # retries on transient failures (502, timeout, etc.)
 
 quant_agent:
   temperature: 0.1          # Low temp → deterministic regime classification

@@ -1,0 +1,5 @@
+{
+  "min_setup_confidence": 0.57,
+  "max_daily_signals": 3,
+  "_comment": "4/7 indicator agreement threshold. Backtested: 59% of days produce signals, ~1.2/day avg. Below 0.57 has no effect (trend_score steps are 0.43, 0.57, 0.71)."
+}

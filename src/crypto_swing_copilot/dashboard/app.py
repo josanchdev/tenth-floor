@@ -20,8 +20,8 @@ import streamlit as st
 
 from crypto_swing_copilot.dashboard.queries import (
     CLOSED_STATUSES,
-    load_signals,
     compute_tier_stats,
+    load_signals,
 )
 
 # ---------------------------------------------------------------------------

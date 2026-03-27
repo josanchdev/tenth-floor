@@ -128,7 +128,11 @@ class TACalculator:
         ema_200 = _last_value(df.ta.ema(length=200))
 
         # --- RSI ---
-        rsi_14 = _last_value(df.ta.rsi(length=14))
+        rsi_series = df.ta.rsi(length=14)
+        rsi_14 = _last_value(rsi_series)
+
+        # --- RSI bullish divergence ---
+        rsi_divergence = self._detect_rsi_divergence(df, rsi_series)
 
         # --- MACD (12, 26, 9) ---
         # pandas-ta returns: [MACD_12_26_9, MACDh_12_26_9, MACDs_12_26_9]
@@ -196,6 +200,7 @@ class TACalculator:
             obv=obv,
             volume_sma_20=volume_sma_20,
             volume_ratio=volume_ratio,
+            rsi_divergence=rsi_divergence,
             trend_score=trend_score,
             support_levels=support_levels,
             resistance_levels=resistance_levels,
@@ -209,6 +214,77 @@ class TACalculator:
             indicators.obv,
         )
         return indicators
+
+    # ------------------------------------------------------------------
+    # RSI divergence (bullish)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_rsi_divergence(
+        df: pd.DataFrame,
+        rsi_series: pd.Series | None,
+        lookback: int = 30,
+        pivot_order: int = 5,
+    ) -> bool | None:
+        """Detect bullish RSI divergence: price lower-low but RSI higher-low.
+
+        Scans the last ``lookback`` bars for the two most recent swing lows
+        in both price and RSI.  If price made a lower low but RSI made a
+        higher low, that's bullish divergence — selling momentum is
+        weakening even as price falls.  Classic capitulation / bottoming signal.
+
+        Parameters
+        ----------
+        df:
+            OHLCV DataFrame sorted ascending by timestamp.
+        rsi_series:
+            Full RSI series (same length as ``df``).
+        lookback:
+            Number of recent bars to scan for divergence.
+        pivot_order:
+            Bars on each side required to confirm a swing low.
+
+        Returns
+        -------
+        bool | None
+            ``True`` if bullish divergence detected, ``False`` if not,
+            ``None`` if insufficient data.
+        """
+        if rsi_series is None or len(df) < lookback or rsi_series.isna().all():
+            return None
+
+        # Work on the last `lookback` bars
+        price_lows = df["low"].values[-lookback:]
+        rsi_vals = rsi_series.values[-lookback:]
+
+        # Find swing lows in price
+        price_swing_lows: list[tuple[int, float]] = []  # (index, value)
+        for i in range(pivot_order, len(price_lows) - pivot_order):
+            window = price_lows[i - pivot_order: i + pivot_order + 1]
+            if price_lows[i] == window.min():
+                price_swing_lows.append((i, float(price_lows[i])))
+
+        if len(price_swing_lows) < 2:
+            return None
+
+        # Find swing lows in RSI at the same bar positions
+        # Use the two most recent price swing lows
+        prev_idx, prev_price = price_swing_lows[-2]
+        curr_idx, curr_price = price_swing_lows[-1]
+
+        # Get RSI values at those swing low bars
+        prev_rsi = float(rsi_vals[prev_idx])
+        curr_rsi = float(rsi_vals[curr_idx])
+
+        # Check for NaN
+        if prev_rsi != prev_rsi or curr_rsi != curr_rsi:  # noqa: PLR0124
+            return None
+
+        # Bullish divergence: price lower-low, RSI higher-low
+        if curr_price < prev_price and curr_rsi > prev_rsi:
+            return True
+
+        return False
 
     # ------------------------------------------------------------------
     # Deterministic trend score
@@ -385,7 +461,6 @@ def _cli_main() -> None:
     """
     import sys
 
-    import numpy as np
 
     logging.basicConfig(
         level=logging.INFO,

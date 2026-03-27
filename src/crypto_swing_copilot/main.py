@@ -16,9 +16,10 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from crypto_swing_copilot.agents.base import load_risk_profile
+from crypto_swing_copilot.agents.base import load_risk_profile, set_active_profile
 from crypto_swing_copilot.agents.quant_agent import QuantAgent
 from crypto_swing_copilot.agents.risk_agent import RiskAgent
 from crypto_swing_copilot.agents.sentiment_agent import SentimentAgent
@@ -36,7 +37,8 @@ from crypto_swing_copilot.features.pair_snapshot import SnapshotBuilder
 from crypto_swing_copilot.notifications.discord_notifier import DiscordNotifier
 
 try:
-    from langfuse.decorators import langfuse_context, observe as lf_observe
+    from langfuse.decorators import langfuse_context
+    from langfuse.decorators import observe as lf_observe
 except ImportError:  # pragma: no cover
     langfuse_context = None  # type: ignore[assignment]
 
@@ -46,6 +48,46 @@ except ImportError:  # pragma: no cover
         return _noop
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FunnelTracker:
+    """Accumulates gate-kill counts through the pipeline."""
+
+    pairs_analyzed: int = 0
+    killed_trend_gate: int = 0
+    killed_strategy_skip: int = 0
+    killed_volume_gate: int = 0
+    killed_rs_gate: int = 0
+    killed_confidence_gate: int = 0
+    killed_rr_gate: int = 0
+    killed_btc_corr_gate: int = 0
+    killed_signal_cap: int = 0
+    proposals_generated: int = 0
+    approved: int = 0
+    published: int = 0
+
+    def summary_lines(self) -> list[str]:
+        """Return the funnel as human-readable lines."""
+        lines = [
+            f"  {self.pairs_analyzed} pairs analysed",
+        ]
+        gates = [
+            (self.killed_trend_gate, "trend regime gate"),
+            (self.killed_strategy_skip, "strategy (SKIP)"),
+            (self.killed_volume_gate, "volume gate"),
+            (self.killed_rs_gate, "BTC relative strength"),
+            (self.killed_confidence_gate, "confidence gate"),
+            (self.killed_rr_gate, "R:R gate"),
+            (self.killed_btc_corr_gate, "BTC correlation guard"),
+            (self.killed_signal_cap, "signal cap"),
+        ]
+        for count, label in gates:
+            if count > 0:
+                lines.append(f"  {count:3d} killed at {label}")
+        lines.append(f"  {self.approved:3d} approved")
+        lines.append(f"  {self.published:3d} published")
+        return lines
 
 
 @lf_observe(name="daily_pipeline")
@@ -68,8 +110,9 @@ def run_pipeline(
     list[PlaybookEntry]
         All entries produced by RiskAgent (approved + rejected).
     """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     logger.info("=== THE TENTH FLOOR — daily run %s ===", today)
+    funnel = FunnelTracker()
 
     # ── 1. Fetch market data ────────────────────────────────────────
     logger.info("Step 1/6: Fetching OHLCV data")
@@ -90,6 +133,7 @@ def run_pipeline(
         logger.warning("No snapshots built — nothing to analyse")
         return []
 
+    funnel.pairs_analyzed = len(snapshots)
     logger.info("Built %d snapshots", len(snapshots))
 
     # ── 4. Run agent pipeline per snapshot ──────────────────────────
@@ -112,7 +156,27 @@ def run_pipeline(
 
     # Trend-regime gate: reject setups where QuantAgent says strong_downtrend.
     # Buying a death cross just because F&G is low is catching a falling knife.
+    # EXCEPTION: capitulation bypass — if F&G is extreme fear AND rising from
+    # its recent trough AND RSI divergence is present, let the pair through.
     _REJECT_REGIMES = {TrendRegime.STRONG_DOWNTREND}
+
+    # ── 4a. Capitulation detection ──────────────────────────────────
+    # Check if Fear & Greed is in extreme fear AND rising from its trough.
+    # This signals potential capitulation — exactly when contrarian trades
+    # have the most edge.  Direction matters more than level.
+    fg_trend = sentiment_snapshot.fear_greed_trend  # [most_recent, ..., oldest]
+    fg_rising_from_extreme = False
+    if len(fg_trend) >= 3 and fg_trend[0] < 25:
+        # F&G is currently extreme fear.  Check if it's rising from a
+        # recent trough: current value > minimum of the last 7 days.
+        trough = min(fg_trend)
+        if fg_trend[0] > trough and (fg_trend[0] - trough) >= 3:
+            fg_rising_from_extreme = True
+            logger.info(
+                "F&G rising from extreme fear: current=%d trough=%d — "
+                "capitulation bypass ARMED",
+                fg_trend[0], trough,
+            )
 
     # Volume confirmation: contrarian LONGs in a downtrend require above-average
     # volume to confirm buyers are actually stepping in (not a slow bleed).
@@ -145,13 +209,25 @@ def run_pipeline(
             )
 
             # Gate: skip strong downtrends — no buying falling knives
+            # EXCEPTION: allow through when capitulation conditions are met
+            # (F&G rising from extreme fear + RSI divergence on this pair)
             if quant_signal.trend_regime in _REJECT_REGIMES:
-                logger.info(
-                    "Trend gate SKIP  %s %s  regime=%s — falling knife",
-                    snap.symbol, snap.timeframe,
-                    quant_signal.trend_regime.value,
-                )
-                continue
+                has_rsi_div = snap.indicators.rsi_divergence is True
+                if fg_rising_from_extreme and has_rsi_div:
+                    logger.info(
+                        "Trend gate BYPASS  %s %s  regime=%s — "
+                        "capitulation setup (F&G rising + RSI divergence)",
+                        snap.symbol, snap.timeframe,
+                        quant_signal.trend_regime.value,
+                    )
+                else:
+                    logger.info(
+                        "Trend gate SKIP  %s %s  regime=%s — falling knife",
+                        snap.symbol, snap.timeframe,
+                        quant_signal.trend_regime.value,
+                    )
+                    funnel.killed_trend_gate += 1
+                    continue
 
             proposal = strategy_agent.run(snap, quant_signal, sentiment_signal)
             logger.info(
@@ -160,6 +236,10 @@ def run_pipeline(
                 proposal.action.value, proposal.direction.value,
                 proposal.reward_risk_ratio,
             )
+
+            # Strategy gate: SKIP/HOLD actions don't proceed
+            if proposal.action.value != "buy":
+                funnel.killed_strategy_skip += 1
 
             # Volume confirmation gate: in downtrends, require above-average
             # volume on BUY proposals.  Low-volume "bounces" in downtrends
@@ -175,6 +255,7 @@ def run_pipeline(
                         "no buyer confirmation in downtrend",
                         snap.symbol, snap.timeframe, vol_ratio, _MIN_VOLUME_RATIO,
                     )
+                    funnel.killed_volume_gate += 1
                     continue
 
             # Relative strength gate: in fear environments, skip alts that
@@ -196,6 +277,7 @@ def run_pipeline(
                             "underperforming BTC in fear market",
                             snap.symbol, alt_pct * 100, btc_pct_change * 100,
                         )
+                        funnel.killed_rs_gate += 1
                         continue
 
             # Use deterministic trend_score for gating/conviction;
@@ -212,6 +294,8 @@ def run_pipeline(
         except Exception:
             logger.exception("Agent pipeline failed for %s %s — skipping", snap.symbol, snap.timeframe)
 
+    funnel.proposals_generated = len(proposals)
+
     if not proposals:
         logger.warning("No proposals generated — all pairs failed or were empty")
 
@@ -221,16 +305,27 @@ def run_pipeline(
     entries = risk_agent.run(proposals) if proposals else []
 
     approved = [e for e in entries if e.verdict == PlaybookVerdict.APPROVED]
+    rejected = [e for e in entries if e.verdict != PlaybookVerdict.APPROVED]
     logger.info(
         "RiskAgent done  total=%d  approved=%d  rejected=%d",
         len(entries),
         len(approved),
-        len(entries) - len(approved),
+        len(rejected),
     )
+
+    # Count RiskAgent rejection reasons for funnel
+    for e in rejected:
+        reason = e.verdict_reasoning.lower()
+        if "r:r" in reason or "below minimum" in reason and "confidence" not in reason:
+            funnel.killed_rr_gate += 1
+        elif "confidence" in reason:
+            funnel.killed_confidence_gate += 1
+        # SHORT/SKIP/HOLD rejections are counted under strategy_skip
 
     # ── 5b. BTC-correlation guard ─────────────────────────────────────
     # If BTC itself was rejected/skipped, cap alt signals to max 2.
     # Crypto is BTC-correlated; if the leader looks bad, limit exposure.
+    pre_corr_count = len(approved)
     if not btc_approved and len(approved) > 2:
         alt_only = [e for e in approved if e.symbol != "BTCUSDT"]
         btc_signals = [e for e in approved if e.symbol == "BTCUSDT"]
@@ -241,15 +336,19 @@ def run_pipeline(
             "BTC-correlation guard: BTC not approved — capped alts to %d",
             len(approved),
         )
+    funnel.killed_btc_corr_gate = pre_corr_count - len(approved)
 
     # ── 5d. Signal cap — publish top N by confidence ──────────────────
     risk_profile = load_risk_profile()
     max_signals = risk_profile.get("max_daily_signals", 5)
+    pre_cap_count = len(approved)
     if len(approved) > max_signals:
         approved.sort(key=lambda e: e.confidence_score, reverse=True)
-        dropped = len(approved) - max_signals
         approved = approved[:max_signals]
-        logger.info("Signal cap: kept top %d, dropped %d", max_signals, dropped)
+        logger.info("Signal cap: kept top %d, dropped %d", max_signals, pre_cap_count - len(approved))
+    funnel.killed_signal_cap = pre_cap_count - len(approved)
+
+    funnel.approved = len(approved)
 
     # Re-rank after all filtering (1 = highest confidence)
     for i, entry in enumerate(approved, 1):
@@ -257,6 +356,10 @@ def run_pipeline(
 
     # ── 6. Persist + notify ─────────────────────────────────────────
     logger.info("Step 6/6: Logging signals and posting to Discord")
+
+    # Log funnel summary
+    funnel_header = f"Pipeline Funnel — {today}"
+    logger.info("%s\n%s", funnel_header, "\n".join(funnel.summary_lines()))
 
     if dry_run:
         logger.info("DRY RUN — skipping SQLite + Discord")
@@ -283,6 +386,11 @@ def run_pipeline(
             if signal_id:
                 logger.info("Logged signal %s", signal_id)
 
+        funnel.published = funnel.approved  # all approved signals get logged
+
+        # Log funnel to pipeline_runs table
+        signal_logger.log_pipeline_run(today, funnel)
+
         open_count = signal_logger.open_signal_count()
 
     # Post to Discord
@@ -292,6 +400,9 @@ def run_pipeline(
         logger.info("Discord embed posted  signals=%d  open=%d", len(approved), open_count)
     else:
         logger.warning("Discord post failed or webhook not configured")
+
+    # Post funnel summary to Discord (every run, including zero-signal days)
+    notifier.post_funnel(today, funnel)
 
     logger.info("=== Pipeline complete ===")
     return entries
@@ -323,6 +434,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: INFO)",
     )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        choices=["validation", "production"],
+        help="Risk profile overlay (default: base config, no overlay)",
+    )
     args = parser.parse_args(argv)
     # Convert empty list to None so fetch_universe uses config
     if not args.pairs:
@@ -339,7 +456,21 @@ def main(argv: list[str] | None = None) -> None:
         datefmt="%H:%M:%S",
     )
 
-    entries = run_pipeline(pairs=args.pairs, dry_run=args.dry_run)
+    if args.profile:
+        set_active_profile(args.profile)
+        logger.info("Active profile: %s", args.profile)
+
+    try:
+        entries = run_pipeline(pairs=args.pairs, dry_run=args.dry_run)
+    except Exception as exc:
+        logger.exception("Pipeline crashed")
+        if not args.dry_run:
+            try:
+                notifier = DiscordNotifier()
+                notifier.post_error(exc)
+            except Exception:
+                logger.exception("Failed to post error alert to Discord")
+        sys.exit(1)
 
     approved = [e for e in entries if e.verdict == PlaybookVerdict.APPROVED]
     print(f"\nDone. {len(approved)} approved signals from {len(entries)} total entries.")

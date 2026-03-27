@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
-import pytest
 
 from crypto_swing_copilot.check_outcomes import _process_signal, check_outcomes
 from crypto_swing_copilot.data.models import (
@@ -18,7 +16,6 @@ from crypto_swing_copilot.data.models import (
     SignalDirection,
 )
 from crypto_swing_copilot.db.signal_logger import SignalLogger
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -177,7 +174,7 @@ class TestProcessSignal:
             created_at="2024-03-01T00:00:00+00:00",
         )
         # Candles 15 days later, never entering the zone
-        late_ts = int(datetime(2024, 3, 16, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+        late_ts = int(datetime(2024, 3, 16, 0, 0, tzinfo=UTC).timestamp() * 1000)
         candles = _make_candles(
             [(65000.0, 66000.0, 64000.0, 65500.0)],
             start_ts=late_ts,
@@ -194,7 +191,7 @@ class TestProcessSignal:
             entered_at="2024-03-01T04:00:00+00:00",
         )
         # Candle 15 days later — price is between SL and TP (no hit)
-        late_ts = int(datetime(2024, 3, 16, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+        late_ts = int(datetime(2024, 3, 16, 0, 0, tzinfo=UTC).timestamp() * 1000)
         candles = _make_candles(
             [(62000.0, 62500.0, 61500.0, 62300.0)],
             start_ts=late_ts,
@@ -206,7 +203,7 @@ class TestProcessSignal:
     def test_no_candles_no_change(self) -> None:
         """If no candles exist after signal creation, no change (unless expired)."""
         # Use a very recent created_at so expiry doesn't trigger
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         signal = _make_signal(status="PENDING", created_at=now)
         candles = _make_candles([])
 
@@ -308,7 +305,7 @@ class TestCheckOutcomesNotifier:
     ) -> pd.DataFrame:
         """Candles timestamped just after now() so they pass the created_at filter."""
         # 1 hour from now — after created_at but within expiry window
-        near_future_ms = int((datetime.now(timezone.utc).timestamp() + 3600) * 1000)
+        near_future_ms = int((datetime.now(UTC).timestamp() + 3600) * 1000)
         return _make_candles(rows, start_ts=near_future_ms)
 
     def test_notifier_called_on_tp_hit(self, tmp_path: Path) -> None:

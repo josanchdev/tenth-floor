@@ -5,13 +5,9 @@
   "no_margin": true,
   "spot_only": true,
   "min_setup_confidence": 0.65,
-  "_comment_confidence": "QuantAgent confidence must exceed this threshold. Raised from 0.55 to 0.65 — tighten further at V2.1 with 30+ closed trades.",
   "stop_loss_atr_multiplier": 1.2,
-  "_comment_sl": "Default SL = entry_mid - (ATR_14 × 1.2).",
   "take_profit_rr_ratio": 2.0,
-  "_comment_tp": "Minimum reward-to-risk ratio of 2:1 for a setup to be included in playbook.",
   "max_daily_signals": 2,
-  "_comment_max_signals": "Hard cap on published signals per day. Option B: 0-2 signals, silence is the default. Only the strongest setups.",
   "conviction_tiers": {
     "high": {
       "min_confidence": 0.80,
@@ -22,5 +18,5 @@
       "suggested_risk_pct": 0.01
     }
   },
-  "_comment_conviction": "Confidence >= 0.80 → high conviction (2% risk). >= 0.65 → standard (1% risk). < 0.65 → SKIP."
+  "_comment": "Base risk profile. Use --profile to override with config/profiles/{name}.json."
 }

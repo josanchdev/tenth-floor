@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 
@@ -74,7 +74,7 @@ class DiscordNotifier:
             return False
 
         if report_date is None:
-            report_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            report_date = datetime.now(UTC).strftime("%Y-%m-%d")
 
         embed = self._build_embed(entries, open_count, report_date)
         return self._send({"embeds": [embed]})
@@ -94,7 +94,7 @@ class DiscordNotifier:
             "footer": {
                 "text": f"Open signals in DB: {open_count}  |  Powered by The Tenth Floor AI",
             },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         if has_signals:
@@ -123,6 +123,37 @@ class DiscordNotifier:
             "value": value,
             "inline": False,
         }
+
+    def post_funnel(self, report_date: str, funnel: object) -> bool:
+        """Post the pipeline funnel summary to Discord.
+
+        Posted every run, including zero-signal days — this is how
+        subscribers (and the operator) know the pipeline ran.
+
+        Parameters
+        ----------
+        report_date:
+            ISO date string for the embed title.
+        funnel:
+            A ``FunnelTracker`` instance with ``summary_lines()`` method.
+        """
+        if not self._webhook_url:
+            return False
+
+        lines = funnel.summary_lines()  # type: ignore[union-attr]
+        body = "\n".join(lines)
+
+        embed = {
+            "title": f"\U0001f4ca Pipeline Funnel \u2014 {report_date}",
+            "description": f"```\n{body}\n```",
+            "color": COLOR_GREY,
+            "footer": {
+                "text": "Powered by The Tenth Floor AI",
+            },
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+        return self._send({"embeds": [embed]})
 
     def post_outcome(self, signal: dict) -> bool:
         """Post a signal resolution update to Discord.
@@ -180,7 +211,42 @@ class DiscordNotifier:
             "footer": {
                 "text": "Powered by The Tenth Floor AI",
             },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+        return self._send({"embeds": [embed]})
+
+    def post_error(self, error: Exception) -> bool:
+        """Post a pipeline error alert to Discord.
+
+        Parameters
+        ----------
+        error:
+            The unhandled exception from the pipeline.
+
+        Returns
+        -------
+        bool
+            ``True`` if the webhook call succeeded.
+        """
+        if not self._webhook_url:
+            return False
+
+        # Truncate traceback to fit Discord embed limits (4096 chars)
+        import traceback
+
+        tb = "".join(traceback.format_exception(error))
+        if len(tb) > 2000:
+            tb = tb[0:1000] + "\n...\n" + tb[-1000:]
+
+        embed = {
+            "title": "\U0001f6a8 PIPELINE ERROR",
+            "description": f"```\n{tb}\n```",
+            "color": COLOR_RED,
+            "footer": {
+                "text": "The Tenth Floor AI — pipeline crashed",
+            },
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         return self._send({"embeds": [embed]})

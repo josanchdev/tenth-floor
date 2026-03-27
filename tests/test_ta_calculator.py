@@ -9,7 +9,6 @@ import pytest
 from crypto_swing_copilot.data.models import TAIndicators
 from crypto_swing_copilot.features.ta_calculator import TACalculator
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -66,9 +65,18 @@ class TestComputeWithSufficientData:
         assert isinstance(result, TAIndicators)
 
     def test_all_fields_populated(self, calculator: TACalculator, df_250: pd.DataFrame) -> None:
-        """With 250 bars, every indicator should be non-None."""
+        """With 250 bars, every indicator should be non-None.
+
+        ``rsi_divergence`` is excluded because it requires two price
+        swing lows in the lookback window, which synthetic random data
+        may not produce.
+        """
         result = calculator.compute(df_250)
+        # rsi_divergence depends on swing-low patterns that random data may lack
+        optional_fields = {"rsi_divergence"}
         for field_name, value in result.model_dump().items():
+            if field_name in optional_fields:
+                continue
             assert value is not None, f"{field_name} should not be None with 250 bars"
 
     def test_ema_ordering(self, calculator: TACalculator, df_250: pd.DataFrame) -> None:

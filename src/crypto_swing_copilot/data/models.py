@@ -16,12 +16,10 @@ Design rules (from docs/v1_risks_and_constraints.md §2):
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # =====================================================================
 # Enums – shared across layers
@@ -95,7 +93,7 @@ class OHLCVBar(BaseModel):
     @property
     def dt_utc(self) -> datetime:
         """Convenience: bar open time as a UTC datetime."""
-        return datetime.fromtimestamp(self.timestamp / 1000, tz=timezone.utc)
+        return datetime.fromtimestamp(self.timestamp / 1000, tz=UTC)
 
 
 class RSSHeadline(BaseModel):
@@ -131,7 +129,7 @@ class SentimentSnapshot(BaseModel):
         default_factory=list, description="Recent RSS headlines (capped per services.yaml)"
     )
     fetched_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="When this snapshot was captured",
     )
 
@@ -188,6 +186,15 @@ class TAIndicators(BaseModel):
         ),
     )
 
+    # Reversal detection
+    rsi_divergence: bool | None = Field(
+        None,
+        description=(
+            "Bullish RSI divergence: price made a lower low but RSI made a "
+            "higher low. Classic capitulation / bottoming signal."
+        ),
+    )
+
     # Structure — swing highs/lows detected from price pivots
     support_levels: list[float] = Field(
         default_factory=list,
@@ -237,7 +244,7 @@ class PairSnapshot(BaseModel):
     @property
     def dt_utc(self) -> datetime:
         """Latest bar time as UTC datetime."""
-        return datetime.fromtimestamp(self.bar_timestamp / 1000, tz=timezone.utc)
+        return datetime.fromtimestamp(self.bar_timestamp / 1000, tz=UTC)
 
 
 # =====================================================================
@@ -410,7 +417,7 @@ class DailyPlaybook(BaseModel):
 
     report_date: str = Field(..., description="ISO date, e.g. '2026-03-14'")
     generated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when the playbook was generated",
     )
     universe_size: int = Field(..., ge=0, description="Number of pairs analysed")

@@ -37,8 +37,8 @@ flowchart TD
         RA["RiskAgent\nSHORT rejection · R:R gate\nconfidence gate · conviction tiers\n(batch, all proposals)"]
     end
 
-    subgraph Output["Step 5b–6 · Dedup + Output Layer"]
-        DD["Per-Pair Dedup\nmain.py · _dedup_per_pair()\nKeep best R:R · prefer 1d on tie"]
+    subgraph Output["Step 5b–6 · Cap + Output Layer"]
+        DD["Signal Cap\nmain.py\nTop N by confidence"]
         PE["PlaybookEntry[]\nApproved signals"]
         DB["SignalLogger\ndb/signal_logger.py\ndata/playbook_history.db\nUNIQUE(pair, tf, date)"]
         DN["DiscordNotifier\nnotifications/discord_notifier.py\nOne consolidated embed per run\n{PAIR} {TF} · LONG · {TIER}"]
@@ -90,7 +90,7 @@ flowchart TD
 ### Step 1 — Fetch Market Data
 
 `MarketDataFetcher` fetches 500-bar OHLCV history from Binance for each
-pair in `config/universe.json` across both timeframes (4h, 1d).
+pair in `config/universe.json` on the 1d timeframe.
 Responses are cached as Parquet files under `data/raw/{SYMBOL}/`.
 Subsequent runs do incremental fetches — only new bars since the last
 cached timestamp are requested.
@@ -133,19 +133,18 @@ scores. It applies deterministic Python rules:
 - Reject SHORT direction
 - Reject SKIP / HOLD action
 - Reject R:R below configured minimum (2.0)
-- Reject confidence < configured minimum (0.55)
+- Reject confidence < configured minimum (currently 0.50 in validation mode)
 - Assign conviction tier: `high` (>= 0.80, 2% risk) or `standard`
   (>= 0.55, 1% risk)
 
 A thin LLM layer generates brief verdict reasoning for each entry.
 
-### Step 5b — Per-Pair Dedup
+### Step 5b — Signal Capping
 
-`_dedup_per_pair()` ensures **one signal per pair per day**. When both
-timeframes (4h and 1d) approve the same pair, the higher R:R wins.
-On tie, 1d is preferred (better alignment with swing trading horizon).
-This prevents subscribers from receiving two conflicting signals for
-the same asset.
+The pipeline enforces a daily signal cap (`max_daily_signals` from
+config). Approved signals are sorted by confidence and only the top N
+are published. This prevents overloading subscribers with too many
+setups.
 
 ### Step 6 — Persist and Notify
 
@@ -205,7 +204,7 @@ tracked per signal during the walk.
 
 | File | Purpose |
 |---|---|
-| `universe.json` | 15 Binance USDT spot pairs to analyse each run |
+| `universe.json` | 13 Binance USDT spot pairs to analyse each run |
 | `risk_profile.json` | Conviction tiers, SL ATR multiplier (1.2), TP R:R ratio (2.0), confidence threshold (0.55) |
 | `models.yaml` | LLM provider, base URL, model name, temperature + max tokens per agent |
 | `services.yaml` | ccxt settings, sentiment API URLs, Langfuse config, Discord rate limit, DB path |

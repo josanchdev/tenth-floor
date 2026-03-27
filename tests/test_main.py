@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 from crypto_swing_copilot.data.models import (
     PairSnapshot,
@@ -22,7 +21,6 @@ from crypto_swing_copilot.data.models import (
     TrendRegime,
 )
 from crypto_swing_copilot.main import run_pipeline
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

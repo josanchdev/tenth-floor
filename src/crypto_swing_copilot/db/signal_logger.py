@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -98,7 +98,7 @@ class SignalLogger:
             return None
 
         signal_id = f"{entry.symbol}_{entry.report_date}_{uuid.uuid4().hex[:8]}"
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         cursor = self._conn.execute(
             """
@@ -191,6 +191,42 @@ class SignalLogger:
             "SELECT * FROM signals WHERE signal_id = ?", (signal_id,)
         ).fetchone()
         return dict(row) if row else None
+
+    def log_pipeline_run(self, run_date: str, funnel: object) -> None:
+        """Persist pipeline funnel diagnostics.
+
+        Parameters
+        ----------
+        run_date:
+            ISO date string (YYYY-MM-DD).
+        funnel:
+            A ``FunnelTracker`` instance (or any object with matching attributes).
+        """
+        from crypto_swing_copilot.agents.base import _active_profile
+
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO pipeline_runs (
+                run_date, created_at, pairs_analyzed,
+                killed_trend_gate, killed_strategy_skip, killed_volume_gate,
+                killed_rs_gate, killed_confidence_gate, killed_rr_gate,
+                killed_btc_corr_gate, killed_signal_cap,
+                proposals_generated, approved, published, profile
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_date, now, funnel.pairs_analyzed,  # type: ignore[union-attr]
+                funnel.killed_trend_gate, funnel.killed_strategy_skip,  # type: ignore[union-attr]
+                funnel.killed_volume_gate, funnel.killed_rs_gate,  # type: ignore[union-attr]
+                funnel.killed_confidence_gate, funnel.killed_rr_gate,  # type: ignore[union-attr]
+                funnel.killed_btc_corr_gate, funnel.killed_signal_cap,  # type: ignore[union-attr]
+                funnel.proposals_generated, funnel.approved,  # type: ignore[union-attr]
+                funnel.published, _active_profile,  # type: ignore[union-attr]
+            ),
+        )
+        self._conn.commit()
+        logger.info("Pipeline run logged  date=%s", run_date)
 
     def close(self) -> None:
         """Close the database connection."""
