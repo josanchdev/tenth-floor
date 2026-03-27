@@ -450,25 +450,32 @@ def run_pipeline(
             pass
 
     with SignalLogger() as signal_logger:
+        new_signals: list[PlaybookEntry] = []
         for entry in approved:
             signal_id = signal_logger.log(entry, langfuse_trace_id=trace_id)
             if signal_id:
                 logger.info("Logged signal %s", signal_id)
+                new_signals.append(entry)
+            else:
+                logger.info("Signal %s %s already exists — skipping Discord post", entry.symbol, entry.report_date)
 
-        funnel.published = funnel.approved  # all approved signals get logged
+        funnel.published = len(new_signals)
 
         # Log funnel to pipeline_runs table
         signal_logger.log_pipeline_run(today, funnel)
 
         open_count = signal_logger.open_signal_count()
 
-    # Post to Discord
+    # Post to Discord — only new signals (not duplicates from re-runs)
     notifier = DiscordNotifier()
-    posted = notifier.post(approved, open_count=open_count, report_date=today)
-    if posted:
-        logger.info("Discord embed posted  signals=%d  open=%d", len(approved), open_count)
+    if new_signals:
+        posted = notifier.post(new_signals, open_count=open_count, report_date=today)
+        if posted:
+            logger.info("Discord embed posted  signals=%d  open=%d", len(new_signals), open_count)
+        else:
+            logger.warning("Discord post failed or webhook not configured")
     else:
-        logger.warning("Discord post failed or webhook not configured")
+        logger.info("No new signals to post (all duplicates or zero approved)")
 
     # Post funnel summary to Discord (every run, including zero-signal days)
     notifier.post_funnel(today, funnel)
