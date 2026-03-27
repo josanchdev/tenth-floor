@@ -14,6 +14,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from crypto_swing_copilot.agents.quant_agent import QuantAgent
 from crypto_swing_copilot.agents.risk_agent import RiskAgent
 from crypto_swing_copilot.agents.sentiment_agent import SentimentAgent
 from crypto_swing_copilot.agents.strategy_agent import StrategyAgent
+from crypto_swing_copilot.config import CONFIG_DIR
 from crypto_swing_copilot.data.market_data import MarketDataFetcher
 from crypto_swing_copilot.data.models import (
     PlaybookEntry,
@@ -62,6 +64,7 @@ class FunnelTracker:
     killed_confidence_gate: int = 0
     killed_rr_gate: int = 0
     killed_btc_corr_gate: int = 0
+    killed_sector_cap: int = 0
     killed_signal_cap: int = 0
     proposals_generated: int = 0
     approved: int = 0
@@ -80,6 +83,7 @@ class FunnelTracker:
             (self.killed_confidence_gate, "confidence gate"),
             (self.killed_rr_gate, "R:R gate"),
             (self.killed_btc_corr_gate, "BTC correlation guard"),
+            (self.killed_sector_cap, "sector diversity cap"),
             (self.killed_signal_cap, "signal cap"),
         ]
         for count, label in gates:
@@ -374,6 +378,35 @@ def run_pipeline(
             len(approved),
         )
     funnel.killed_btc_corr_gate = pre_corr_count - len(approved)
+
+    # ── 5c. Sector diversity cap ────────────────────────────────────────
+    # With 26 pairs, a bullish day could produce 5 L1 signals that are
+    # effectively the same trade.  Keep the best per sector.
+    universe_path = CONFIG_DIR / "universe.json"
+    with open(universe_path, encoding="utf-8") as fh:
+        universe_cfg = json.load(fh)
+    sector_map: dict[str, str] = universe_cfg.get("sectors", {})
+    max_per_sector: int = universe_cfg.get("max_per_sector", 1)
+
+    if sector_map and len(approved) > 1:
+        pre_sector_count = len(approved)
+        # Sort by confidence descending, then pick first N per sector
+        approved.sort(key=lambda e: e.confidence_score, reverse=True)
+        seen_sectors: dict[str, int] = {}
+        sector_filtered: list[PlaybookEntry] = []
+        for entry in approved:
+            sector = sector_map.get(entry.symbol, entry.symbol)
+            count = seen_sectors.get(sector, 0)
+            if count < max_per_sector:
+                sector_filtered.append(entry)
+                seen_sectors[sector] = count + 1
+            else:
+                logger.info(
+                    "Sector cap SKIP  %s  sector=%s — already have %d from this sector",
+                    entry.symbol, sector, max_per_sector,
+                )
+        approved = sector_filtered
+        funnel.killed_sector_cap = pre_sector_count - len(approved)
 
     # ── 5d. Signal cap — publish top N by confidence ──────────────────
     max_signals = risk_profile.get("max_daily_signals", 5)

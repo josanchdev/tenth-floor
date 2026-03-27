@@ -339,9 +339,12 @@ class MarketDataFetcher:
         new_bars = self._fetch_raw(symbol, timeframe, since=since)
 
         if cached is not None and not cached.empty:
-            df = pd.concat([cached, new_bars], ignore_index=True)
-            df = df.drop_duplicates(subset=["timestamp"], keep="last")
-            df = df.sort_values("timestamp").reset_index(drop=True)
+            if new_bars.empty:
+                df = cached
+            else:
+                df = pd.concat([cached, new_bars], ignore_index=True)
+                df = df.drop_duplicates(subset=["timestamp"], keep="last")
+                df = df.sort_values("timestamp").reset_index(drop=True)
         else:
             df = new_bars
 

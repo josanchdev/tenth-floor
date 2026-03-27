@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     killed_confidence_gate   INTEGER NOT NULL DEFAULT 0,
     killed_rr_gate           INTEGER NOT NULL DEFAULT 0,
     killed_btc_corr_gate     INTEGER NOT NULL DEFAULT 0,
+    killed_sector_cap        INTEGER NOT NULL DEFAULT 0,
     killed_signal_cap        INTEGER NOT NULL DEFAULT 0,
     proposals_generated      INTEGER NOT NULL DEFAULT 0,
     approved                 INTEGER NOT NULL DEFAULT 0,

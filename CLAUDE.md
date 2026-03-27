@@ -73,8 +73,13 @@ All proposals ──→ 7 filtering gates ──→ RiskAgent (conviction tiers)
 5. **RiskAgent confidence** — below `min_setup_confidence` → rejected
 6. **RiskAgent R:R** — below `take_profit_rr_ratio` (2.0) → rejected
 7. **BTC correlation guard** — if BTC failed, cap alt signals to 2
+8. **Sector diversity cap** — max 1 signal per sector (L1, L2, DeFi, meme, etc.)
 
 Then: signal cap (max_daily_signals) and re-ranking by confidence.
+
+**LLM short-circuit:** Pairs with `trend_score < min_confidence` are pre-filtered
+before any LLM calls. Only qualifying pairs hit QuantAgent/StrategyAgent, saving
+significant GPU time on bearish days.
 
 ### Hard Rules
 
@@ -106,7 +111,7 @@ All config in `config/`. No secrets — those go in `.env` (see `.env.example`).
 
 | File | Purpose |
 |------|---------|
-| `universe.json` | 13 Binance spot USDT pairs |
+| `universe.json` | 26 Binance spot USDT pairs + sector mapping |
 | `risk_profile.json` | Conviction tiers, SL/TP params, confidence threshold, max signals |
 | `models.yaml` | LLM provider routing + per-agent temp/token settings |
 | `services.yaml` | External service URLs and cache settings |

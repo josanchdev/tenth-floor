@@ -108,8 +108,21 @@ class SignalLogger:
             with open(mf, encoding="utf-8") as fh:
                 sql = fh.read()
 
-            if sql.strip() and not sql.strip().startswith("--"):
-                self._conn.executescript(sql)
+            # Strip SQL comments to check if there's real SQL to execute
+            real_sql = "\n".join(
+                line for line in sql.splitlines()
+                if line.strip() and not line.strip().startswith("--")
+            )
+            if real_sql.strip():
+                try:
+                    self._conn.executescript(sql)
+                except sqlite3.OperationalError as exc:
+                    # Idempotent: ignore "duplicate column" from ALTER TABLE
+                    # when schema.sql already includes the column (fresh DBs).
+                    if "duplicate column" in str(exc):
+                        logger.debug("Migration %s: column already exists — skipping", version)
+                    else:
+                        raise
 
             self._conn.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
@@ -258,16 +271,17 @@ class SignalLogger:
                 run_date, created_at, pairs_analyzed,
                 killed_trend_gate, killed_strategy_skip, killed_volume_gate,
                 killed_rs_gate, killed_confidence_gate, killed_rr_gate,
-                killed_btc_corr_gate, killed_signal_cap,
+                killed_btc_corr_gate, killed_sector_cap, killed_signal_cap,
                 proposals_generated, approved, published, profile
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_date, now, funnel.pairs_analyzed,  # type: ignore[union-attr]
                 funnel.killed_trend_gate, funnel.killed_strategy_skip,  # type: ignore[union-attr]
                 funnel.killed_volume_gate, funnel.killed_rs_gate,  # type: ignore[union-attr]
                 funnel.killed_confidence_gate, funnel.killed_rr_gate,  # type: ignore[union-attr]
-                funnel.killed_btc_corr_gate, funnel.killed_signal_cap,  # type: ignore[union-attr]
+                funnel.killed_btc_corr_gate, funnel.killed_sector_cap,  # type: ignore[union-attr]
+                funnel.killed_signal_cap,  # type: ignore[union-attr]
                 funnel.proposals_generated, funnel.approved,  # type: ignore[union-attr]
                 funnel.published, _active_profile,  # type: ignore[union-attr]
             ),
