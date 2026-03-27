@@ -163,6 +163,11 @@ def _compute_price_levels(
     ind = snapshot.indicators  # type: ignore[union-attr]
     atr = ind.atr_14 or (price * 0.02)
 
+    # Dynamic precision based on price magnitude
+    from crypto_swing_copilot.agents.strategy_agent import StrategyAgent
+
+    decimals = StrategyAgent._price_decimals(price)
+
     supports = ind.support_levels
     resistances = ind.resistance_levels
 
@@ -170,23 +175,23 @@ def _compute_price_levels(
 
     if nearby_supports:
         anchor_support = nearby_supports[-1]
-        entry_low = round(anchor_support, 2)
-        entry_high = round(min(price, anchor_support + atr * 0.5), 2)
+        entry_low = round(anchor_support, decimals)
+        entry_high = round(min(price, anchor_support + atr * 0.5), decimals)
     else:
-        entry_high = round(price, 2)
-        entry_low = round(price - (atr * 0.5), 2)
+        entry_high = round(price, decimals)
+        entry_low = round(price - (atr * 0.5), decimals)
 
     entry_mid = (entry_low + entry_high) / 2
 
     if nearby_supports:
         anchor_support = nearby_supports[-1]
-        stop_loss = round(anchor_support - atr * 0.5, 2)
+        stop_loss = round(anchor_support - atr * 0.5, decimals)
     else:
-        stop_loss = round(entry_mid - atr * sl_mult, 2)
+        stop_loss = round(entry_mid - atr * sl_mult, decimals)
 
     actual_risk = entry_mid - stop_loss
     if actual_risk <= 0:
-        stop_loss = round(entry_mid - atr * sl_mult, 2)
+        stop_loss = round(entry_mid - atr * sl_mult, decimals)
         actual_risk = entry_mid - stop_loss
 
     above_resistances = [r for r in resistances if r > entry_mid]
@@ -195,11 +200,11 @@ def _compute_price_levels(
         candidate_tp = above_resistances[0]
         candidate_rr = (candidate_tp - entry_mid) / actual_risk if actual_risk > 0 else 0
         if candidate_rr >= min_rr:
-            take_profit = round(candidate_tp, 2)
+            take_profit = round(candidate_tp, decimals)
         else:
-            take_profit = round(entry_mid + actual_risk * min_rr, 2)
+            take_profit = round(entry_mid + actual_risk * min_rr, decimals)
     else:
-        take_profit = round(entry_mid + actual_risk * min_rr, 2)
+        take_profit = round(entry_mid + actual_risk * min_rr, decimals)
 
     reward = take_profit - entry_mid
     rr_ratio = round(reward / actual_risk, 2) if actual_risk > 0 else min_rr

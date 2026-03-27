@@ -179,6 +179,26 @@ class StrategyAgent:
         )
         return proposal
 
+    @staticmethod
+    def _price_decimals(price: float) -> int:
+        """Return the number of decimal places appropriate for a given price.
+
+        Ensures sub-dollar and micro-cap coins get enough precision.
+        Examples: BTC ($70k) → 0, ETH ($3k) → 1, SOL ($130) → 2,
+                  ONDO ($0.25) → 4, PEPE ($0.000009) → 8.
+        """
+        if price >= 1000:
+            return 0
+        if price >= 10:
+            return 1
+        if price >= 1:
+            return 2
+        if price >= 0.01:
+            return 4
+        if price >= 0.0001:
+            return 6
+        return 8
+
     def _compute_price_levels(self, snapshot: PairSnapshot) -> dict:
         """Compute entry zone, SL, and TP anchored to structural S/R levels.
 
@@ -192,6 +212,7 @@ class StrategyAgent:
           2. Fall back to ATR-based formula when no suitable S/R is found.
         """
         price = snapshot.current_price
+        decimals = self._price_decimals(price)
         atr = snapshot.indicators.atr_14 or (price * 0.02)  # fallback: 2% of price
         sl_mult = self._risk_profile.get("stop_loss_atr_multiplier", 1.2)
         min_rr = self._risk_profile.get("take_profit_rr_ratio", 2.0)
@@ -207,12 +228,12 @@ class StrategyAgent:
         if nearby_supports:
             # Use the highest nearby support as the entry anchor
             anchor_support = nearby_supports[-1]  # sorted ascending, last = closest
-            entry_low = round(anchor_support, 2)
-            entry_high = round(min(price, anchor_support + atr * 0.5), 2)
+            entry_low = round(anchor_support, decimals)
+            entry_high = round(min(price, anchor_support + atr * 0.5), decimals)
         else:
             # Fallback: ATR-based pullback from spot
-            entry_high = round(price, 2)
-            entry_low = round(price - (atr * 0.5), 2)
+            entry_high = round(price, decimals)
+            entry_low = round(price - (atr * 0.5), decimals)
 
         entry_mid = (entry_low + entry_high) / 2
 
@@ -220,14 +241,14 @@ class StrategyAgent:
         if nearby_supports:
             # SL just below the structural support with ATR buffer
             anchor_support = nearby_supports[-1]
-            stop_loss = round(anchor_support - atr * 0.5, 2)
+            stop_loss = round(anchor_support - atr * 0.5, decimals)
         else:
-            stop_loss = round(entry_mid - atr * sl_mult, 2)
+            stop_loss = round(entry_mid - atr * sl_mult, decimals)
 
         actual_risk = entry_mid - stop_loss
         if actual_risk <= 0:
             # Safety: if entry_mid <= stop_loss, fall back to ATR formula
-            stop_loss = round(entry_mid - atr * sl_mult, 2)
+            stop_loss = round(entry_mid - atr * sl_mult, decimals)
             actual_risk = entry_mid - stop_loss
 
         # --- Take-profit: anchor to nearest resistance above price ---
@@ -241,10 +262,10 @@ class StrategyAgent:
 
             if candidate_rr >= min_rr:
                 # Great — natural R:R meets minimum
-                take_profit = round(candidate_tp, 2)
+                take_profit = round(candidate_tp, decimals)
             else:
                 # Resistance is too close; use min R:R to set TP
-                take_profit = round(entry_mid + actual_risk * min_rr, 2)
+                take_profit = round(entry_mid + actual_risk * min_rr, decimals)
         else:
             # No resistance found; use min R:R
             take_profit = round(entry_mid + actual_risk * min_rr, 2)
