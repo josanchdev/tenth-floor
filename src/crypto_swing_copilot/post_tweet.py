@@ -53,6 +53,7 @@ def _cli_main() -> None:
     report_date = args.date or date.today().isoformat()
 
     if args.draft_only:
+        from crypto_swing_copilot.social.discord_draft import send_draft_to_discord
         from crypto_swing_copilot.social.tweet_drafter import TweetDrafter
 
         with TweetDrafter() as drafter:
@@ -62,6 +63,10 @@ def _cli_main() -> None:
         for i, opt in enumerate(draft.drafts.options, 1):
             print(f"  Option {i} [{opt.tweet_type}]: {opt.text}")
         print(f"\nSaved to data/tweet_drafts/{report_date}.json")
+
+        # Send to private Discord channel for easy copy-paste
+        if send_draft_to_discord(draft):
+            print("Draft sent to Discord #tweet-drafts channel")
     else:
         from crypto_swing_copilot.social.tweet_poster import TweetPoster
 

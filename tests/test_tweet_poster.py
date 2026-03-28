@@ -1,4 +1,4 @@
-"""Unit tests for TweetPoster — interactive CLI tweet poster."""
+"""Unit tests for TweetPoster and Discord draft notifier."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from crypto_swing_copilot.social.discord_draft import send_draft_to_discord
 from crypto_swing_copilot.social.tweet_drafter import (
     TweetDraftFile,
+    TweetDraftResponse,
     TweetOption,
 )
 from crypto_swing_copilot.social.tweet_poster import TweetPoster
@@ -177,3 +179,80 @@ class TestTweetPoster:
             text="Reply 1", in_reply_to_tweet_id="12345",
         )
         poster.close()
+
+
+# ---------------------------------------------------------------------------
+# Discord draft notifier
+# ---------------------------------------------------------------------------
+
+def _make_draft_obj(with_thread: bool = False) -> TweetDraftFile:
+    thread = ["Thread reply here"] if with_thread else []
+    return TweetDraftFile(
+        report_date="2026-03-28",
+        generated_at="2026-03-28T12:00:00",
+        pipeline_context={"report_date": "2026-03-28"},
+        drafts=TweetDraftResponse(
+            options=[TweetOption(
+                text="26 pairs. 0 signals. The AI said no.",
+                tweet_type="funnel_report",
+                thread=thread,
+            )],
+            reasoning="Zero signal day.",
+        ),
+    )
+
+
+class TestDiscordDraft:
+    def test_no_webhook_url_returns_false(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            result = send_draft_to_discord(_make_draft_obj())
+        assert result is False
+
+    def test_explicit_url_sends(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 204
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("crypto_swing_copilot.social.discord_draft.requests.post", return_value=mock_resp) as mock_post:
+            result = send_draft_to_discord(_make_draft_obj(), webhook_url="https://example.com/hook")
+
+        assert result is True
+        mock_post.assert_called_once()
+        payload = mock_post.call_args[1]["json"]
+        assert "2026-03-28" in payload["content"]
+        assert len(payload["embeds"]) == 2  # 1 option + 1 reasoning
+
+    def test_with_thread_includes_thread_text(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("crypto_swing_copilot.social.discord_draft.requests.post", return_value=mock_resp) as mock_post:
+            send_draft_to_discord(_make_draft_obj(with_thread=True), webhook_url="https://example.com/hook")
+
+        payload = mock_post.call_args[1]["json"]
+        option_embed = payload["embeds"][0]
+        assert "Thread 1" in option_embed["description"]
+
+    def test_http_error_returns_false(self) -> None:
+        import requests as req
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = req.HTTPError(
+            response=MagicMock(status_code=400, text="Bad request"),
+        )
+
+        with patch("crypto_swing_copilot.social.discord_draft.requests.post", return_value=mock_resp):
+            result = send_draft_to_discord(_make_draft_obj(), webhook_url="https://example.com/hook")
+
+        assert result is False
+
+    def test_env_var_fallback(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch.dict("os.environ", {"DISCORD_TWEET_WEBHOOK_URL": "https://env.com/hook"}):
+            with patch("crypto_swing_copilot.social.discord_draft.requests.post", return_value=mock_resp) as mock_post:
+                result = send_draft_to_discord(_make_draft_obj())
+
+        assert result is True
+        assert mock_post.call_args[0][0] == "https://env.com/hook"
