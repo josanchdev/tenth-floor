@@ -11,7 +11,7 @@
 defaults:
   provider: openai
   base_url: http://localhost:8000/v1    # vLLM server
-  model: Qwen/Qwen3-32B-AWQ
+  model: Qwen/Qwen3.5-27B
   timeout: 30.0                          # seconds; covers slow vLLM cold-starts
   max_retries: 3                         # retries on transient failures (502, timeout, etc.)
 

@@ -229,7 +229,7 @@ served locally via **vLLM** on an RTX 3090.
 defaults:
   provider: openai
   base_url: http://localhost:8000/v1
-  model: Qwen/Qwen3-32B-AWQ
+  model: Qwen/Qwen3.5-27B
 ```
 
 Per-agent overrides control temperature and token budget:
