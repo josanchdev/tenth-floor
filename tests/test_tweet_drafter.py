@@ -61,15 +61,15 @@ class TestTweetModels:
         )
         assert len(resp.options) == 1
 
-    def test_tweet_draft_response_max_options(self) -> None:
-        with pytest.raises(ValueError):
-            TweetDraftResponse(
-                options=[
-                    TweetOption(text=f"Opt {i}", tweet_type="philosophy")
-                    for i in range(3)
-                ],
-                reasoning="Too many",
-            )
+    def test_tweet_draft_response_many_options(self) -> None:
+        resp = TweetDraftResponse(
+            options=[
+                TweetOption(text=f"Opt {i}", tweet_type="philosophy")
+                for i in range(4)
+            ],
+            reasoning="LLM returned extra",
+        )
+        assert len(resp.options) == 4  # model accepts, code trims to 2
 
     def test_tweet_draft_file(self) -> None:
         draft = TweetDraftFile(
