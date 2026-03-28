@@ -26,6 +26,7 @@ dependencies = [
     "python-dotenv>=1.0.0",           # .env loading
     "pyyaml>=6.0.1",  # YAML config loading
     "streamlit>=1.35.0",  # Admin dashboard
+    "tweepy>=4.14.0",  # X/Twitter API for auto-poster
 ]
 
 [project.optional-dependencies]

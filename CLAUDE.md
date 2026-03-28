@@ -37,6 +37,11 @@ python -m crypto_swing_copilot.check_outcomes --dry-run
 ./run.sh --reset-db         # wipe and recreate DB from schema.sql
 ./run.sh --outcomes-only    # skip pipeline, just check outcomes
 
+# Tweet auto-poster
+python -m crypto_swing_copilot.post_tweet                # draft + interactive post
+python -m crypto_swing_copilot.post_tweet --draft-only   # generate draft only (no posting)
+python -m crypto_swing_copilot.post_tweet 2026-03-28     # specific date
+
 # Dashboard
 streamlit run src/crypto_swing_copilot/dashboard/app.py
 ```

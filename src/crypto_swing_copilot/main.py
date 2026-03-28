@@ -462,7 +462,8 @@ def run_pipeline(
         funnel.published = len(new_signals)
 
         # Log funnel to pipeline_runs table
-        signal_logger.log_pipeline_run(today, funnel)
+        fg_val = sentiment_snapshot.fear_greed_value if sentiment_snapshot else None
+        signal_logger.log_pipeline_run(today, funnel, fear_greed_value=fg_val)
 
         open_count = signal_logger.open_signal_count()
 

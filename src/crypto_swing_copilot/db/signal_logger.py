@@ -252,7 +252,12 @@ class SignalLogger:
         ).fetchone()
         return dict(row) if row else None
 
-    def log_pipeline_run(self, run_date: str, funnel: object) -> None:
+    def log_pipeline_run(
+        self,
+        run_date: str,
+        funnel: object,
+        fear_greed_value: int | None = None,
+    ) -> None:
         """Persist pipeline funnel diagnostics.
 
         Parameters
@@ -261,6 +266,8 @@ class SignalLogger:
             ISO date string (YYYY-MM-DD).
         funnel:
             A ``FunnelTracker`` instance (or any object with matching attributes).
+        fear_greed_value:
+            Current Fear & Greed index value (for tweet drafter context).
         """
         from crypto_swing_copilot.agents.base import _active_profile
 
@@ -272,8 +279,9 @@ class SignalLogger:
                 killed_trend_gate, killed_strategy_skip, killed_volume_gate,
                 killed_rs_gate, killed_confidence_gate, killed_rr_gate,
                 killed_btc_corr_gate, killed_sector_cap, killed_signal_cap,
-                proposals_generated, approved, published, profile
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                proposals_generated, approved, published, profile,
+                fear_greed_value
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_date, now, funnel.pairs_analyzed,  # type: ignore[union-attr]
@@ -284,10 +292,80 @@ class SignalLogger:
                 funnel.killed_signal_cap,  # type: ignore[union-attr]
                 funnel.proposals_generated, funnel.approved,  # type: ignore[union-attr]
                 funnel.published, _active_profile,  # type: ignore[union-attr]
+                fear_greed_value,
             ),
         )
         self._conn.commit()
-        logger.info("Pipeline run logged  date=%s", run_date)
+        logger.info("Pipeline run logged  date=%s  fg=%s", run_date, fear_greed_value)
+
+    # ------------------------------------------------------------------
+    # Read methods for tweet drafter
+    # ------------------------------------------------------------------
+
+    def get_pipeline_run(self, run_date: str) -> dict | None:
+        """Fetch a single pipeline_runs row by date."""
+        row = self._conn.execute(
+            "SELECT * FROM pipeline_runs WHERE run_date = ?", (run_date,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_recent_signals(self, lookback_days: int = 30) -> list[dict]:
+        """Fetch all signals from the last N days."""
+        rows = self._conn.execute(
+            "SELECT * FROM signals WHERE report_date >= date('now', ?)",
+            (f"-{lookback_days} days",),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_last_published_date(self) -> str | None:
+        """Return the most recent report_date with a published signal."""
+        row = self._conn.execute(
+            "SELECT report_date FROM signals ORDER BY report_date DESC LIMIT 1"
+        ).fetchone()
+        return row[0] if row else None
+
+    # ------------------------------------------------------------------
+    # Tweet posting methods
+    # ------------------------------------------------------------------
+
+    def log_tweet(
+        self,
+        tweet_id: str,
+        report_date: str,
+        tweet_text: str,
+        tweet_type: str,
+        thread_tweets: list[str] | None = None,
+        draft_file: str | None = None,
+        image_paths: list[str] | None = None,
+    ) -> None:
+        """Insert a posted tweet record."""
+        import json as _json
+
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            """
+            INSERT OR IGNORE INTO posted_tweets (
+                tweet_id, created_at, report_date, tweet_text, tweet_type,
+                thread_tweets, draft_file, image_paths
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tweet_id, now, report_date, tweet_text, tweet_type,
+                _json.dumps(thread_tweets) if thread_tweets else None,
+                draft_file,
+                _json.dumps(image_paths) if image_paths else None,
+            ),
+        )
+        self._conn.commit()
+        logger.info("Tweet logged  id=%s  type=%s  date=%s", tweet_id, tweet_type, report_date)
+
+    def tweet_exists(self, report_date: str, tweet_type: str) -> bool:
+        """Check if a tweet was already posted for this date+type."""
+        row = self._conn.execute(
+            "SELECT 1 FROM posted_tweets WHERE report_date = ? AND tweet_type = ?",
+            (report_date, tweet_type),
+        ).fetchone()
+        return row is not None
 
     def close(self) -> None:
         """Close the database connection."""

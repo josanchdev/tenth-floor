@@ -56,5 +56,20 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     proposals_generated      INTEGER NOT NULL DEFAULT 0,
     approved                 INTEGER NOT NULL DEFAULT 0,
     published                INTEGER NOT NULL DEFAULT 0,
-    profile                  TEXT                     -- 'validation', 'production', or NULL
+    profile                  TEXT,                    -- 'validation', 'production', or NULL
+    fear_greed_value         INTEGER                  -- Fear & Greed index at run time
+);
+
+-- Tweet auto-poster — tracks posted tweets for dedup and analytics.
+CREATE TABLE IF NOT EXISTS posted_tweets (
+    tweet_id         TEXT PRIMARY KEY,       -- X/Twitter post ID returned by API
+    created_at       TEXT NOT NULL,          -- ISO timestamp (UTC) when posted
+    report_date      TEXT NOT NULL,          -- which pipeline run this relates to
+    tweet_text       TEXT NOT NULL,          -- the posted text
+    tweet_type       TEXT NOT NULL,          -- funnel_report|market_commentary|philosophy|signal_day
+    thread_tweets    TEXT,                   -- JSON array of thread continuation texts
+    draft_file       TEXT,                   -- path to source draft file
+    image_paths      TEXT,                   -- JSON array of image paths (future use)
+
+    UNIQUE(report_date, tweet_type)
 );

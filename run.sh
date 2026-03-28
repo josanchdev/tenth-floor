@@ -167,6 +167,12 @@ if [[ "$OUTCOMES_ONLY" == false ]]; then
     fi
 fi
 
+# Detect --dry-run flag for downstream steps
+DRY_RUN=false
+for arg in "${PASSTHROUGH_ARGS[@]}"; do
+    [[ "$arg" == "--dry-run" ]] && DRY_RUN=true
+done
+
 # 2. Run daily pipeline (unless --outcomes-only)
 if [[ "$OUTCOMES_ONLY" == false ]]; then
     log "Running daily pipeline..."
@@ -177,11 +183,17 @@ if [[ "$OUTCOMES_ONLY" == false ]]; then
     fi
 fi
 
-# 3. Run outcome checker (skip on --dry-run)
-DRY_RUN=false
-for arg in "${PASSTHROUGH_ARGS[@]}"; do
-    [[ "$arg" == "--dry-run" ]] && DRY_RUN=true
-done
+# 3. Generate tweet draft (skip on --dry-run)
+if [[ "$DRY_RUN" == false && "$OUTCOMES_ONLY" == false ]]; then
+    log "Generating tweet draft..."
+    if "$PYTHON_BIN" -m crypto_swing_copilot.post_tweet --draft-only 2>&1 | tee -a "$PIPELINE_LOG"; then
+        log "Tweet draft generated"
+    else
+        log "WARNING: Tweet draft generation failed"
+    fi
+fi
+
+# 4. Run outcome checker (skip on --dry-run)
 
 if [[ "$DRY_RUN" == false ]]; then
     log "Running outcome checker..."
@@ -194,7 +206,7 @@ else
     log "Skipping outcome checker (dry run)"
 fi
 
-# 4. DB backup
+# 5. DB backup
 DB_PATH="${SCRIPT_DIR}/data/playbook_history.db"
 if [[ -f "$DB_PATH" && "$DRY_RUN" == false ]]; then
     BACKUP_PATH="${DB_PATH}.bak"
