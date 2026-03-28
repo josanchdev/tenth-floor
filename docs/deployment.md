@@ -26,7 +26,7 @@ within 24 GB with room for KV cache at 4096 context length.
 pip install vllm
 
 # Start serving Qwen3 32B AWQ
-vllm serve Qwen/Qwen3.5-27B \
+vllm serve Qwen/Qwen3-32B-AWQ \
   --port 8000 \
   --max-model-len 4096 \
   --gpu-memory-utilization 0.90
@@ -49,7 +49,7 @@ After=network.target
 [Service]
 Type=simple
 User=your-user
-ExecStart=/path/to/venv/bin/vllm serve Qwen/Qwen3.5-27B \
+ExecStart=/path/to/venv/bin/vllm serve Qwen/Qwen3-32B-AWQ \
   --port 8000 --max-model-len 4096 --gpu-memory-utilization 0.90
 Restart=on-failure
 RestartSec=10
@@ -224,7 +224,7 @@ all agents; per-agent sections override specific fields:
 defaults:
   provider: openai
   base_url: http://localhost:8000/v1
-  model: Qwen/Qwen3.5-27B
+  model: Qwen/Qwen3-32B-AWQ
 
 quant_agent:
   temperature: 0.1

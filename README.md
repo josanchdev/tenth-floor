@@ -102,7 +102,7 @@ pip install -e ".[dev]"
 ### Start the inference server
 
 ```bash
-vllm serve Qwen/Qwen3.5-27B \
+vllm serve Qwen/Qwen3-32B-AWQ \
   --port 8000 \
   --max-model-len 4096 \
   --gpu-memory-utilization 0.90

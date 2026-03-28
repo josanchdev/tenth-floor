@@ -48,7 +48,7 @@ streamlit run src/crypto_swing_copilot/dashboard/app.py
 
 ## Architecture
 
-**The Tenth Floor AI** is a multi-agent LLM pipeline that publishes daily crypto swing-trade signals to a paid Discord community. It runs locally with Qwen3.5-27B on vLLM.
+**The Tenth Floor AI** is a multi-agent LLM pipeline that publishes daily crypto swing-trade signals to a paid Discord community. It runs locally with Qwen3-32B-AWQ on vLLM.
 
 ### Pipeline Flow (main.py → `run_pipeline()`)
 
