@@ -12,12 +12,12 @@ budget.
 
 ## How It Works
 
-The pipeline fetches Binance spot OHLCV data for 13 pairs on the daily
+The pipeline fetches Binance spot OHLCV data for 26 pairs on the daily
 timeframe, computes technical indicators deterministically in Python,
-then routes enriched snapshots through a four-agent LLM pipeline.
-Approved signals (max 2/day) are published to Discord and logged to
-SQLite. Signal resolutions (TP hit, SL hit, expired) are also posted
-to Discord for full transparency.
+then routes enriched snapshots through 7 sequential filtering gates and
+a four-agent LLM pipeline. Approved signals (max 2/day) are published
+to Discord and logged to SQLite. Signal resolutions (TP hit, SL hit,
+expired) are also posted to Discord for full transparency.
 
 ```
 Binance OHLCV  ──┐
@@ -51,23 +51,29 @@ diagram with Mermaid flowchart.
 | Deterministic trend scoring (7-signal agreement) | Complete |
 | BTC relative strength filter | Complete |
 
-### V3 (in progress)
+### V3 (Tier 1 complete)
 
 | Layer | Status |
 |---|---|
-| Pipeline diagnostics & funnel report | Planned |
-| Historical replay / backtester | Planned |
-| LLM retry logic + timeout config | Planned |
-| Config profiles (validation / production) | Planned |
-| Failure alerting (Discord error embeds) | Planned |
+| Pipeline diagnostics & funnel report | Complete |
+| Historical replay / backtester | Complete |
+| LLM retry logic + timeout config | Complete |
+| Config profiles (validation / production) | Complete |
+| Failure alerting (Discord error embeds) | Complete |
+| LLM short-circuit (pre-filter by trend_score) | Complete |
+| 26-pair universe + sector diversity cap | Complete |
+| DB migration system | Complete |
+| GitHub Actions CI | Complete |
+| Dynamic price precision | Complete |
+| Duplicate-safe Discord posting | Complete |
+| Market-price entries | Complete |
 | Langfuse prompt management | Planned |
-| GitHub Actions CI | Planned |
 | Richer sentiment (more RSS feeds) | Planned |
-| DB migration system | Planned |
+| Structured logging | Planned |
 
 See [ROADMAP.md](ROADMAP.md) for the full V3 plan.
 
-**144 tests** across 9 files. All mocked — no network calls, no LLM
+**145 tests** across 9 files. All mocked — no network calls, no LLM
 server required.
 
 ---
@@ -121,7 +127,7 @@ cp .env.example .env
 ### Run the pipeline
 
 ```bash
-# Full universe (13 pairs, 1d timeframe)
+# Full universe (26 pairs, 1d timeframe)
 python -m crypto_swing_copilot.main
 
 # Specific pairs
@@ -149,7 +155,7 @@ cron, outcome checking, and monitoring.
 Each approved signal carries:
 
 - **Pair** and timeframe (1d)
-- **Entry zone** anchored to structural support/resistance
+- **Entry zone** at/near current market price
 - **Stop-loss** below swing low with ATR buffer
 - **Take-profit** at nearest resistance (R:R >= 2.0 enforced)
 - **Reward:Risk ratio** (minimum 2.0)
@@ -187,11 +193,11 @@ full specification.
 ```
 crypto-swing-copilot/
 ├── config/
-│   ├── universe.json          # 13 Binance spot pairs to analyse
+│   ├── universe.json          # 26 Binance spot pairs + sector mapping
 │   ├── risk_profile.json      # Conviction tiers, SL/TP parameters
 │   ├── models.yaml            # LLM provider + per-agent config
 │   ├── services.yaml          # External service configuration
-│   └── spot_only.json         # Spot-only enforcement rules
+│   └── profiles/              # validation.json / production.json overlays
 ├── db/
 │   └── schema.sql             # SQLite DDL (version-controlled)
 ├── docs/
@@ -220,9 +226,8 @@ crypto-swing-copilot/
 │   │   └── discord_notifier.py # Discord webhook poster
 │   └── check_outcomes.py      # Standalone TP/SL resolution
 ├── tests/                     # Unit tests, all mocked
-├── VISION.md                  # Product vision and design principles
 ├── ROADMAP.md                 # V3 implementation plan
-└── research.md                # Tool research notes
+└── GTM.md                     # Go-to-market plan
 ```
 
 ---

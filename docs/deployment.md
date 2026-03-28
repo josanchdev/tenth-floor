@@ -65,7 +65,7 @@ WantedBy=multi-user.target
 ### Manual Run
 
 ```bash
-# Full universe (13 pairs, 1d timeframe)
+# Full universe (26 pairs, 1d timeframe)
 python -m crypto_swing_copilot.main
 
 # Subset of pairs
@@ -78,8 +78,9 @@ python -m crypto_swing_copilot.main --dry-run
 python -m crypto_swing_copilot.main --log-level DEBUG
 ```
 
-Typical runtime: ~30 seconds for 1 pair, ~3 minutes for the full 13-
-pair universe (depends on LLM throughput).
+Typical runtime: ~30 seconds for 1 pair, ~3 minutes for the full 26-
+pair universe (depends on LLM throughput; LLM short-circuit skips most
+pairs on bearish days).
 
 ### Cron Scheduling
 
@@ -208,11 +209,11 @@ Trading parameters applied by `StrategyAgent` and `RiskAgent`:
 | Key | Default | Description |
 |---|---|---|
 | `timeframes` | `["1d"]` | Candle timeframe (daily only) |
-| `min_setup_confidence` | `0.50` (validation) / `0.65` (production) | Minimum confidence to publish |
+| `min_setup_confidence` | `0.57` (validation) / `0.65` (production) | Minimum confidence to publish |
 | `stop_loss_atr_multiplier` | `1.2` | SL = entry - (ATR × multiplier) |
 | `take_profit_rr_ratio` | `2.0` | TP = entry + (SL distance × ratio) |
 | `conviction_tiers.high` | `{min: 0.80, risk: 0.02}` | High conviction tier |
-| `conviction_tiers.standard` | `{min: 0.65, risk: 0.01}` | Standard conviction tier |
+| `conviction_tiers.standard` | `{min: 0.57, risk: 0.01}` | Standard conviction tier (validation) |
 
 ### `models.yaml`
 
@@ -238,11 +239,6 @@ change `model` and `base_url` here. No code changes required.
 External service configuration: ccxt settings, sentiment API URLs,
 Langfuse parameters, Discord rate limits, and database path. See the
 file for the full structure.
-
-### `spot_only.json`
-
-Enforcement flags ensuring the system never generates futures, margin,
-or leveraged signals. Read by agents at startup.
 
 ---
 

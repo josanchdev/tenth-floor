@@ -41,7 +41,7 @@ def _make_ohlcv_df(rows: int = 50) -> pd.DataFrame:
 def _make_snapshot() -> PairSnapshot:
     return PairSnapshot(
         symbol="BTCUSDT",
-        timeframe="4h",
+        timeframe="1d",
         current_price=62_000.0,
         bar_timestamp=1_700_000_000_000,
         indicators=TAIndicators(),
@@ -54,7 +54,7 @@ def _make_snapshot() -> PairSnapshot:
 def _make_quant_signal() -> QuantSignal:
     return QuantSignal(
         symbol="BTCUSDT",
-        timeframe="4h",
+        timeframe="1d",
         trend_regime=TrendRegime.UPTREND,
         signals=["EMA bullish"],
         confidence=0.82,
@@ -74,7 +74,7 @@ def _make_sentiment_signal() -> SentimentSignal:
 def _make_proposal() -> SetupProposal:
     return SetupProposal(
         symbol="BTCUSDT",
-        timeframe="4h",
+        timeframe="1d",
         direction=SignalDirection.LONG,
         action=SetupAction.BUY,
         entry_zone_low=62_000.0,
@@ -266,7 +266,7 @@ class TestPipelineFlow:
         snap1 = _make_snapshot()
         snap2 = PairSnapshot(
             symbol="ETHUSDT",
-            timeframe="4h",
+            timeframe="1d",
             current_price=3_000.0,
             bar_timestamp=1_700_000_000_000,
             indicators=TAIndicators(),
@@ -417,7 +417,7 @@ class TestTrendRegimeGate:
         """QuantAgent returning strong_downtrend should prevent StrategyAgent call."""
         downtrend_quant = QuantSignal(
             symbol="BTCUSDT",
-            timeframe="4h",
+            timeframe="1d",
             trend_regime=TrendRegime.STRONG_DOWNTREND,
             signals=["EMA death cross (20 < 50)", "Price below 200 EMA"],
             confidence=0.45,
@@ -442,7 +442,7 @@ class TestTrendRegimeGate:
         """Regular downtrend (not strong) should still reach StrategyAgent."""
         downtrend_quant = QuantSignal(
             symbol="BTCUSDT",
-            timeframe="4h",
+            timeframe="1d",
             trend_regime=TrendRegime.DOWNTREND,
             signals=["Price below 200 EMA"],
             confidence=0.55,

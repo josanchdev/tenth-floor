@@ -10,7 +10,7 @@ This agent is **mostly Python logic** with a thin LLM layer for verdict reasonin
   - Skip low-confidence setups (confidence < 0.65)
   - Assign conviction tier and suggested_risk_pct (Python, not LLM)
 
-Conviction tier logic (from VISION.md):
+Conviction tier logic (from risk_profile.json):
   - confidence >= 0.80 → high    → suggested_risk_pct = 0.02
   - confidence >= 0.65 → standard → suggested_risk_pct = 0.01
   - confidence <  0.65 → SKIP, do not publish

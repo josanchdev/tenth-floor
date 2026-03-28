@@ -54,17 +54,19 @@ Each approved signal is a `PlaybookEntry` (defined in `data/models.py`):
 Price levels are computed by `StrategyAgent._compute_price_levels()` before the LLM is called. The LLM receives them and must use them verbatim.
 
 ```
-entry_zone_low   = nearest swing low (support within 1.5×ATR of price)
-entry_zone_high  = entry_zone_low × 1.01  # tight zone around support
-entry_mid        = (entry_low + entry_high) / 2
-stop_loss        = entry_mid − (ATR_14 × stop_loss_atr_multiplier)
-take_profit      = entry_mid + (actual_risk × take_profit_rr_ratio)
-                                          # actual_risk = entry_mid − stop_loss (after rounding)
+entry_zone_high  = current_price + (ATR_14 × 0.25)   # small buffer above spot
+entry_zone_low   = current_price − (ATR_14 × 0.25)   # small buffer below spot
+entry_mid        = current_price
+stop_loss        = nearest support below price − (ATR_14 × 0.15)
+                   fallback: entry_mid − (ATR_14 × stop_loss_atr_multiplier)
+take_profit      = nearest resistance above price + (ATR_14 × 0.15)
+                   fallback: entry_mid + (actual_risk × take_profit_rr_ratio)
 ```
 
-The midpoint-based computation ensures R:R is symmetric and always
-meets the configured minimum (2.0). TP is derived from the actual
-risk after SL rounding, not from the raw ATR distance.
+Entry is at/near current market price so subscribers can act immediately.
+SL is placed below structural support, TP at nearest resistance. R:R is
+computed from the actual entry price — weak setups where price is far from
+support are naturally killed by the R:R >= 2.0 gate.
 
 Parameters are set in `config/risk_profile.json`:
 

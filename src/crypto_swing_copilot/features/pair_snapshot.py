@@ -14,7 +14,7 @@ Usage as library::
     from crypto_swing_copilot.features.pair_snapshot import SnapshotBuilder
 
     builder = SnapshotBuilder()
-    snapshot = builder.build(ohlcv_df, "BTCUSDT", "4h", sentiment=sentiment)
+    snapshot = builder.build(ohlcv_df, "BTCUSDT", "1d", sentiment=sentiment)
 """
 
 from __future__ import annotations

@@ -28,7 +28,6 @@ observability:
 
 discord:
   # Set DISCORD_WEBHOOK_URL in your .env file.
-  rate_limit_sleep_s: 1               # seconds between webhook sends (future multi-embed use)
 
 database:
   path: data/playbook_history.db      # SQLite signal log, relative to project root

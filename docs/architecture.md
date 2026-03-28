@@ -133,9 +133,9 @@ scores. It applies deterministic Python rules:
 - Reject SHORT direction
 - Reject SKIP / HOLD action
 - Reject R:R below configured minimum (2.0)
-- Reject confidence < configured minimum (currently 0.50 in validation mode)
+- Reject confidence < configured minimum (0.57 validation, 0.65 production)
 - Assign conviction tier: `high` (>= 0.80, 2% risk) or `standard`
-  (>= 0.55, 1% risk)
+  (>= 0.57, 1% risk)
 
 A thin LLM layer generates brief verdict reasoning for each entry.
 
@@ -204,11 +204,11 @@ tracked per signal during the walk.
 
 | File | Purpose |
 |---|---|
-| `universe.json` | 13 Binance USDT spot pairs to analyse each run |
-| `risk_profile.json` | Conviction tiers, SL ATR multiplier (1.2), TP R:R ratio (2.0), confidence threshold (0.55) |
+| `universe.json` | 26 Binance USDT spot pairs + sector mapping |
+| `risk_profile.json` | Conviction tiers, SL ATR multiplier (1.2), TP R:R ratio (2.0), confidence threshold (0.57/0.65) |
 | `models.yaml` | LLM provider, base URL, model name, temperature + max tokens per agent |
-| `services.yaml` | ccxt settings, sentiment API URLs, Langfuse config, Discord rate limit, DB path |
-| `spot_only.json` | Spot-only enforcement flags (no leverage, no futures, no margin) |
+| `services.yaml` | ccxt settings, sentiment API URLs, Langfuse config, DB path |
+| `profiles/` | validation.json / production.json config overlays |
 
 ### `db/`
 

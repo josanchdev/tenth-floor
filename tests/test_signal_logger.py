@@ -30,7 +30,7 @@ def logger(db_path: Path) -> SignalLogger:
 def approved_entry() -> PlaybookEntry:
     return PlaybookEntry(
         symbol="BTCUSDT",
-        timeframe="4h",
+        timeframe="1d",
         report_date="2026-03-20",
         verdict=PlaybookVerdict.APPROVED,
         verdict_reasoning="Strong setup.",
@@ -53,7 +53,7 @@ def approved_entry() -> PlaybookEntry:
 def rejected_entry() -> PlaybookEntry:
     return PlaybookEntry(
         symbol="ETHUSDT",
-        timeframe="4h",
+        timeframe="1d",
         report_date="2026-03-20",
         verdict=PlaybookVerdict.REJECTED,
         verdict_reasoning="Confidence too low.",

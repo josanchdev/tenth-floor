@@ -42,7 +42,7 @@ def sample_indicators() -> TAIndicators:
 def sample_snapshot(sample_indicators: TAIndicators) -> PairSnapshot:
     return PairSnapshot(
         symbol="BTCUSDT",
-        timeframe="4h",
+        timeframe="1d",
         current_price=62000.0,
         bar_timestamp=1710374400000,
         indicators=sample_indicators,
@@ -66,7 +66,7 @@ def sample_sentiment_snapshot() -> SentimentSnapshot:
 def sample_quant_signal() -> QuantSignal:
     return QuantSignal(
         symbol="BTCUSDT",
-        timeframe="4h",
+        timeframe="1d",
         trend_regime=TrendRegime.UPTREND,
         signals=["EMA golden cross (20 > 50)", "Price above 200 EMA"],
         confidence=0.78,
@@ -88,7 +88,7 @@ def sample_sentiment_signal() -> SentimentSignal:
 def sample_proposal() -> SetupProposal:
     return SetupProposal(
         symbol="BTCUSDT",
-        timeframe="4h",
+        timeframe="1d",
         direction=SignalDirection.LONG,
         action=SetupAction.BUY,
         entry_zone_low=61690.0,
@@ -246,7 +246,7 @@ class TestComputePriceLevels:
             resistance_levels=[62800.0, 63500.0],
         )
         snap = PairSnapshot(
-            symbol="BTCUSDT", timeframe="4h",
+            symbol="BTCUSDT", timeframe="1d",
             current_price=62000.0, bar_timestamp=1710374400000,
             indicators=indicators,
         )
@@ -272,7 +272,7 @@ class TestComputePriceLevels:
             resistance_levels=[108.0],
         )
         snap = PairSnapshot(
-            symbol="SOLUSDT", timeframe="4h",
+            symbol="SOLUSDT", timeframe="1d",
             current_price=100.0, bar_timestamp=1710374400000,
             indicators=indicators,
         )
@@ -294,7 +294,7 @@ class TestComputePriceLevels:
             support_levels=[], resistance_levels=[],
         )
         snap = PairSnapshot(
-            symbol="BTCUSDT", timeframe="4h",
+            symbol="BTCUSDT", timeframe="1d",
             current_price=62000.0, bar_timestamp=1710374400000,
             indicators=indicators,
         )
@@ -364,7 +364,7 @@ class TestRiskAgent:
     def test_reject_short(self) -> None:
         """SHORT proposal → REJECTED with 'Spot only'."""
         short_proposal = SetupProposal(
-            symbol="BTCUSDT", timeframe="4h",
+            symbol="BTCUSDT", timeframe="1d",
             direction=SignalDirection.SHORT, action=SetupAction.SELL,
             entry_zone_low=62000, entry_zone_high=62500,
             stop_loss=63000, take_profit=60000,
@@ -394,7 +394,7 @@ class TestRiskAgent:
     def test_reject_low_rr(self) -> None:
         """R:R below configured minimum (2.0) → REJECTED."""
         low_rr_proposal = SetupProposal(
-            symbol="BTCUSDT", timeframe="4h",
+            symbol="BTCUSDT", timeframe="1d",
             direction=SignalDirection.LONG, action=SetupAction.BUY,
             entry_zone_low=62000, entry_zone_high=62500,
             stop_loss=60500, take_profit=63500,

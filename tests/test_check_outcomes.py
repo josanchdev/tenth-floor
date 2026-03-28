@@ -225,7 +225,7 @@ class TestCheckOutcomesIntegration:
         # Log an approved signal
         entry = PlaybookEntry(
             symbol="BTCUSDT",
-            timeframe="4h",
+            timeframe="1d",
             report_date="2024-03-14",
             verdict=PlaybookVerdict.APPROVED,
             verdict_reasoning="Strong setup.",
