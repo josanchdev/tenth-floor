@@ -33,4 +33,4 @@ risk_agent:
 
 tweet_drafter:
   temperature: 0.7          # Higher temp → creative, varied tweets
-  max_output_tokens: 512    # Short output but multiple options + reasoning
+  max_output_tokens: 1024   # Hook + thread replies + reasoning need more room
