@@ -27,6 +27,8 @@ dependencies = [
     "pyyaml>=6.0.1",  # YAML config loading
     "streamlit>=1.35.0",  # Admin dashboard
     "tweepy>=4.14.0",  # X/Twitter API for auto-poster
+    "yfinance>=0.2.36",               # Equity/ETF/commodity OHLCV (Yahoo Finance)
+    "exchange_calendars>=4.5.0",      # Market calendars (trading days, holidays)
 ]
 
 [project.optional-dependencies]
@@ -47,13 +49,13 @@ packages = ["src/tenth_floor"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]   # pycodestyle, pyflakes, isort, pyupgrade, bugbear
-ignore = ["E501"]                       # line-length handled by formatter
+ignore = ["E501", "UP047"]              # line-length handled by formatter; UP047 = PEP 695 type params (not yet widespread)
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS signals (
     outcome_date             TEXT,
     max_adverse_excursion    REAL,
     max_favorable_excursion  REAL,
+    asset_class              TEXT NOT NULL DEFAULT 'crypto',
     langfuse_trace_id        TEXT,
 
     -- Prevent duplicate signals for the same pair/timeframe on the same day.
@@ -57,7 +58,8 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     approved                 INTEGER NOT NULL DEFAULT 0,
     published                INTEGER NOT NULL DEFAULT 0,
     profile                  TEXT,                    -- 'validation', 'production', or NULL
-    fear_greed_value         INTEGER                  -- Fear & Greed index at run time
+    fear_greed_value         INTEGER,                 -- Fear & Greed index at run time
+    asset_class              TEXT                     -- 'crypto', 'equity', 'etf', 'commodity', or NULL for all
 );
 
 -- Tweet auto-poster — tracks posted tweets for dedup and analytics.

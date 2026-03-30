@@ -70,17 +70,6 @@ def _load_services_config() -> dict:
     return cfg.get("market_data", {})
 
 
-def _load_universe() -> list[str]:
-    """Return the list of trading pairs from ``config/universe.json``."""
-    path = CONFIG_DIR / "universe.json"
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
-    pairs: list[str] = data.get("pairs", [])
-    if not pairs:
-        raise ValueError(f"No pairs found in {path}")
-    return pairs
-
-
 def _load_timeframes() -> list[str]:
     """Return configured timeframes from ``config/risk_profile.json``."""
     path = CONFIG_DIR / "risk_profile.json"
@@ -386,7 +375,10 @@ class MarketDataFetcher:
         dict
             ``{symbol: {timeframe: DataFrame}}``.
         """
-        pairs = pairs or _load_universe()
+        if pairs is None:
+            from tenth_floor.universe import load_universe
+
+            pairs = load_universe().symbols(asset_class="crypto")
         timeframes = timeframes or _load_timeframes()
 
         results: dict[str, dict[str, pd.DataFrame]] = {}
@@ -471,16 +463,17 @@ def _cli_main() -> None:
 
     # Parse CLI args
     args = sys.argv[1:]
-    pairs = args if args else None  # None → use universe.json
     timeframes = _load_timeframes()
-
     fetcher = MarketDataFetcher()
 
-    if pairs is None:
-        pairs = _load_universe()
-        console.print(f"Universe: [bold]{len(pairs)}[/bold] pairs from config/universe.json")
-    else:
+    if args:
+        pairs = args
         console.print(f"Pairs: [bold]{', '.join(pairs)}[/bold]")
+    else:
+        from tenth_floor.universe import load_universe
+
+        pairs = load_universe().symbols(asset_class="crypto")
+        console.print(f"Universe: [bold]{len(pairs)}[/bold] crypto pairs from config/universe.json")
 
     console.print(f"Timeframes: [bold]{', '.join(timeframes)}[/bold]\n")
 

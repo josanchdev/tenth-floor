@@ -28,7 +28,6 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 
 from tenth_floor.agents.base import load_risk_profile, set_active_profile
-from tenth_floor.config import CONFIG_DIR
 from tenth_floor.data.market_data import MarketDataFetcher
 from tenth_floor.features.pair_snapshot import SnapshotBuilder
 
@@ -257,9 +256,10 @@ def replay(
     min_volume_ratio = 1.3
 
     # Load universe
-    universe_path = CONFIG_DIR / "universe.json"
-    with open(universe_path, encoding="utf-8") as fh:
-        pairs = json.load(fh).get("pairs", [])
+    from tenth_floor.universe import load_universe
+
+    universe = load_universe()
+    pairs = universe.symbols(asset_class="crypto")  # backtest currently crypto-only
 
     # Fetch cached OHLCV — no API calls, just reads from Parquet cache
     logger.info("Loading cached OHLCV for %d pairs...", len(pairs))
