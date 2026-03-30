@@ -721,39 +721,215 @@ analysis across crypto, stocks, and commodities."
 
 ## Implementation Phases (high-level, not execution-planned)
 
-### Phase 1: Foundation
-- ~~Package rename: `crypto_swing_copilot` → `tenth_floor`~~ (complete)
-- Restructure `universe.json` with `asset_class`, `class_leader`, `market_hours`
-- Add `asset_class` column to SQLite schema (migration)
-- `YFinanceDataFetcher` alongside existing `MarketDataFetcher`
-- Parquet caching for equity/ETF/commodity OHLCV (same pattern as crypto)
-- Market calendar integration (`exchange_calendars`)
+### Phase 1: Foundation (complete)
+- ~~Package rename: `crypto_swing_copilot` → `tenth_floor`~~
+- ~~Restructure `universe.json` with `asset_class`, `class_leader`, `market_hours`~~
+- ~~Add `asset_class` column to SQLite schema (migration)~~
+- ~~`YFinanceDataFetcher` alongside existing `MarketDataFetcher`~~
+- ~~Parquet caching for equity/ETF/commodity OHLCV (same pattern as crypto)~~
+- ~~Generalize gates 4 & 7 from BTC-specific to class-leader~~
+- ~~Multi-source routing in pipeline and outcome checker~~
+- ~~Fix: honest R:R (no manufactured targets), symbol override, asset_class logging~~
+- Market calendar integration (`exchange_calendars`) — deferred, not blocking
 
-### Phase 2: Sentiment & Macro Redesign
-- MacroAgent: new agent that produces structured macro briefing
-- Macro data fetchers: VIX, DXY, 10Y yield (all via yfinance/FRED)
-- RSS feed expansion (8 feeds across crypto + financial news)
-- Earnings calendar integration (via yfinance)
-- Per-asset context injection into StrategyAgent prompts
-- Remove current SentimentAgent, replace with MacroAgent + context layer
+### Phase 1.5: AI-First Signal Generation
 
-### Phase 3: Gate & Pipeline Generalization
-- Gate 4: BTC relative strength → config-driven market-leader relative strength
-- Gate 7: BTC correlation guard → config-driven class-leader correlation guard
-- Hybrid signal cap: max per class + max per sector + max total
-- Two-pass pipeline scheduling (equities pass + crypto pass)
+> **The architectural shift.** Move from "Python decides, LLM rubber-stamps" to
+> "LLM decides, Python validates." The LLM becomes the trader. Python becomes
+> the data provider and safety net.
+
+#### Why this phase exists
+
+The current pipeline uses the LLM as a rubber stamp. Python computes all prices
+(entry, SL, TP), a mechanical `trend_score` overrides the LLM's confidence, and
+RiskAgent's accept/reject is pure Python rules. The agents are expensive window
+dressing — the only real LLM decision is StrategyAgent's BUY/SKIP.
+
+Modern reasoning models can do much more. Given rich context (indicators, macro,
+structural levels, news), they can reason like a professional trader: identify
+asymmetric setups, pick intelligent entry/SL/TP levels anchored to structure,
+assess risk holistically across a portfolio. The pipeline should let them.
+
+#### New architecture: 3 agents + validation layer
+
+**Old flow:**
+```
+Python computes everything → LLM rubber-stamps → Python gates filter
+```
+
+**New flow:**
+```
+Data + Indicators (Python) → MacroAnalyst (1 LLM call) → context frame
+                                                              ↓
+Pre-screen (minimal, data-quality only) → ~30-36 candidates
+                                                              ↓
+TradeAnalyst (1 LLM call per candidate) → BUY proposals with entry/SL/TP/reasoning
+                                                              ↓
+Python validation (sanity checks) → valid proposals
+                                                              ↓
+RiskReviewer (1 LLM call, sees ALL proposals) → approved signals with conviction
+                                                              ↓
+Signal cap (hard business rule) → featured signals → publish
+```
+
+**Agent 1: MacroAnalyst** (runs once per pipeline)
+
+The frame within which every trade is evaluated. Must run FIRST — its output
+is the opening context of every TradeAnalyst call.
+
+- Ingests: VIX level + trend, crypto F&G + trend, DXY level + trend, per-asset-class
+  context, RSS headlines (Phase 2 enrichment), earnings calendar (Phase 2)
+- Outputs structured JSON: macro regime (risk_on/risk_off/mixed/transitioning),
+  per-asset-class impact brief, specific alerts (earnings, news catalysts)
+- V1 (Phase 1.5): VIX + F&G + DXY only. Lightweight but gives the frame.
+- V2 (Phase 2): Add RSS feeds, 10Y yield, earnings calendar, FRED data.
+
+Replaces current SentimentAgent.
+
+**Agent 2: TradeAnalyst** (runs per candidate asset — the core)
+
+A professional swing trader with 20 years of experience. Given full technical
+and macro context, decides if the trade is worth taking. If yes, specifies
+the complete plan: entry, SL, TP, with reasoning for each level.
+
+- Ingests: Full OHLCV history summary, all TA indicators, support/resistance
+  levels, macro context from MacroAnalyst, asset-class context (market hours,
+  entry type, overnight gap risk for equities)
+- Outputs: BUY or SKIP. If BUY: entry zone, stop-loss, take-profit, confidence
+  (0-1), reasoning for each price level, confluence factors, risk factors
+- The LLM picks its own levels based on structural analysis. Python provides
+  support/resistance as context, not as mandated prices.
+- Prompt framing: "The macro environment today is [MacroAnalyst output]. Given
+  this context, analyze [SYMBOL]. Here are the computed indicators and structural
+  levels. Is this a swing trade worth taking? If yes, give me the full plan."
+
+Replaces both QuantAgent and StrategyAgent. One coherent analysis with full
+context is better than two fragmented calls.
+
+**Agent 3: RiskReviewer** (runs once, sees ALL proposals together)
+
+The chief risk officer. Reviews all proposals as a portfolio, not one at a time.
+
+- Ingests: ALL BUY proposals from TradeAnalyst (with full reasoning), macro
+  context, current open signals from DB (portfolio state)
+- Outputs per proposal: APPROVE/REJECT/MODIFY, conviction tier (high/standard),
+  risk notes, portfolio reasoning
+- Reasons about: sector concentration, asset-class correlation, total exposure,
+  macro alignment, which setups are strongest relative to each other
+- The LLM decides conviction and approval holistically. "XOM and XLE are both
+  energy longs — in this risk-off environment, pick the stronger setup, don't
+  approve both."
+
+Replaces RiskAgent and most mechanical gates (correlation guard, sector cap,
+relative strength).
+
+**Python validation layer** (safety net, not judgment)
+
+Hard rules that should NEVER be violated regardless of LLM output:
+- No SHORT (spot only — force to SKIP if LLM hallucinates a short)
+- SL < entry < TP (basic directional sanity)
+- SL not more than 15% below entry (prevents absurd stops)
+- TP not more than 50% above entry (prevents fantasy targets)
+- R:R >= 1.5 hard floor (business integrity — subscribers should never get a
+  mathematically unfavorable trade, regardless of LLM reasoning)
+- R:R math verification (recalculate from LLM's numbers, flag if wrong)
+- Signal cap (max featured per day — business rule, not trade quality)
+- Duplicate check (same asset already has an open signal)
+
+If validation fails, signal is rejected with a clear log. These are "the LLM
+made a math error or hallucinated" catches, not judgment calls.
+
+#### What gets deleted
+
+| Component | Fate | Why |
+|-----------|------|-----|
+| QuantAgent | Merged into TradeAnalyst | Trend classification is part of trade analysis |
+| StrategyAgent | Merged into TradeAnalyst | One coherent analysis > two fragmented calls |
+| SentimentAgent | Replaced by MacroAnalyst | Richer input, structured output, per-class reasoning |
+| RiskAgent | Replaced by RiskReviewer | Portfolio-level LLM reasoning > per-signal Python rules |
+| Gate 1 (trend regime) | Deleted | TradeAnalyst won't BUY a strong downtrend |
+| Gate 2 (strategy SKIP) | Implicit | TradeAnalyst says BUY or SKIP directly |
+| Gate 3 (volume) | Deleted | TradeAnalyst sees volume data and reasons about it |
+| Gate 4 (relative strength) | Deleted | RiskReviewer handles cross-asset comparison |
+| Gate 5 (confidence) | Deleted | TradeAnalyst's confidence is real, used by RiskReviewer |
+| Gate 6 (R:R) | Moved to validation | Python verifies math, 1.5 hard floor |
+| Gate 7 (correlation guard) | Moved to RiskReviewer | LLM reasons about correlation |
+| Gate 8 (sector cap) | Moved to RiskReviewer | LLM reasons about diversification |
+| `trend_score` | Deleted | LLM confidence is the confidence |
+| `_compute_price_levels()` | Deleted | TradeAnalyst picks its own levels |
+| Pre-filter (trend_score) | Replaced by pre-screen | Data-quality only, extremely permissive |
+
+#### Pre-screen (minimal, data-quality only)
+
+The pre-screen exists to save GPU time on degenerate cases, NOT to make
+judgment calls. Kill only when:
+- Fewer than 50 OHLCV bars (insufficient data for meaningful analysis)
+- Zero volume for 5+ consecutive days (illiquid / stale data)
+- Last 5 candles ALL > 5% red with no recovery candle (violent crash in
+  progress — even a pro wouldn't catch a falling knife mid-freefall)
+
+Everything else goes to TradeAnalyst. 36 assets at ~6 seconds each = 3.6
+minutes. That's fine for a once-daily pipeline. The opportunity cost of
+killing a capitulation reversal is higher than 3 extra minutes of compute.
+
+#### R:R hard floor rationale
+
+The 1.5 minimum R:R is not about trade quality — it's about business integrity.
+If RiskReviewer approves a signal with 1.2 R:R and it loses, the subscriber
+lost more than they could have gained. That's reputational damage regardless
+of whether the LLM's reasoning was sound.
+
+The LLM decides if the setup is good. Python confirms the math makes sense.
+Those are two different jobs.
+
+Asset-class aware in future: equity setups often have tighter but more reliable
+ranges. The 1.5 floor may need per-class tuning after validation data accumulates.
+
+#### Implementation order
+
+1. MacroAnalyst v1 — lightweight macro context (VIX + F&G + DXY)
+2. TradeAnalyst — merge Quant + Strategy, LLM picks levels, receives macro frame
+3. Python validation layer — sanity checks on LLM output
+4. RiskReviewer — portfolio-level LLM reasoning, sees all proposals + macro
+5. Update Pydantic models — SetupProposal becomes LLM-determined
+6. Update main.py — new pipeline flow, delete old gates
+7. Update FunnelTracker — new stages for diagnostics
+8. Validation runs — compare old vs new output quality
+
+#### LLM call budget
+
+- 1 MacroAnalyst call
+- ~30-36 TradeAnalyst calls (most assets pass the permissive pre-screen)
+- 1 RiskReviewer call
+- Total: ~32-38 calls per run
+
+Current pipeline: ~14-20 calls (Quant + Strategy per passing asset + Sentiment
++ Risk). The new architecture uses more calls but each call is more productive
+(one coherent analysis instead of two fragmented ones, plus the RiskReviewer
+sees the full portfolio).
+
+On RTX 3090 with Qwen3-32B-AWQ: ~6 seconds per call = ~3.5 minutes for
+TradeAnalyst + ~10 seconds each for MacroAnalyst and RiskReviewer. Total
+pipeline time: ~4-5 minutes. Acceptable for a daily run.
+
+### Phase 2: Macro Enrichment
+- MacroAnalyst v2: RSS feed expansion (8 feeds across crypto + financial news)
+- Macro data fetchers: 10Y yield via FRED, earnings calendar via yfinance
+- Specific alert system (earnings in N days, major news catalysts)
+- Richer per-asset context injection into TradeAnalyst prompts
 - Conditional entry zones for equities (`CONDITIONAL_OPEN` + `VOID` status)
-- Agent prompt updates: asset-class context injection, remove "crypto" language
-- Outcome checker: per-class timeframe, market calendar, VOID handling
+- Two-pass pipeline scheduling (equities pass + crypto pass)
+- Outcome checker: market calendar awareness, VOID handling
 
-### Phase 4: Validation
+### Phase 3: Validation
+- Run new architecture in validation mode for 30+ days
+- Manual review of MacroAnalyst and TradeAnalyst output quality
+- Compare signal quality metrics: LLM-chosen levels vs old Python-computed levels
 - Backtest full multi-asset universe on 90 days of historical data
-- Run equities in validation mode alongside crypto production for 30+ days
-- Manual review of MacroAgent output quality for 2 weeks
-- Compare signal quality metrics across asset classes
-- Tune equity-specific thresholds if needed (via config profiles)
+- Tune per-asset-class thresholds if needed (via config profiles)
+- A/B comparison: old pipeline vs new on same day's data
 
-### Phase 5: Launch
+### Phase 4: Launch
 - Publish multi-asset signals to Discord (per-asset-class channels)
 - Update tweet drafter for multi-asset content
 - Update dashboard with asset-class filters

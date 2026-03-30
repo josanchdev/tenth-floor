@@ -50,9 +50,9 @@ streamlit run src/tenth_floor/dashboard/app.py
 
 **The Tenth Floor AI** is a multi-agent LLM pipeline that publishes daily swing-trade signals to a paid Discord community. It runs locally with Qwen3-32B-AWQ on vLLM.
 
-V4 is expanding from crypto-only (26 pairs) to a multi-asset universe: crypto, US equities, ETFs, and commodities (~36 assets). The pipeline, gates, and philosophy remain the same — the input universe is what changes. See [ROADMAP.md](ROADMAP.md) for the full V4 plan.
+V4 is expanding from crypto-only to a multi-asset universe (~36 assets: crypto, US equities, ETFs, commodities) AND shifting to an AI-first architecture where the LLM makes trading decisions and Python validates. See [ROADMAP.md](ROADMAP.md) for the full plan.
 
-### Pipeline Flow (main.py → `run_pipeline()`)
+### Pipeline Flow — Current (V3/Phase 1, being replaced in Phase 1.5)
 
 ```
 Data sources (ccxt/yfinance) ──→ TACalculator ──→ SnapshotBuilder ──→ PairSnapshot
@@ -68,39 +68,33 @@ All proposals ──→ 7 filtering gates ──→ RiskAgent (conviction tiers)
                                                    SignalLogger (SQLite)        DiscordNotifier (webhook)
 ```
 
-### Filtering Gates (in order)
+### Pipeline Flow — Target (Phase 1.5: AI-First)
 
-1. **Trend regime** — `STRONG_DOWNTREND` → skip pair entirely.
-   *Exception:* capitulation bypass allows through when F&G is rising from
-   extreme fear (< 25, rising from 7-day trough by >= 3 pts) AND RSI bullish
-   divergence is detected on the pair.
-2. **StrategyAgent** — LLM decides BUY or SKIP based on 2+ strong/weak technical signals
-3. **Volume confirmation** — in downtrends, BUY requires volume >= 1.3x SMA-20
-4. **BTC relative strength** — in fear markets, alts underperforming BTC → skip
-5. **RiskAgent confidence** — below `min_setup_confidence` → rejected
-6. **RiskAgent R:R** — below `take_profit_rr_ratio` (2.0) → rejected
-7. **BTC correlation guard** — if BTC failed, cap alt signals to 2
-8. **Sector diversity cap** — max 1 signal per sector (L1, L2, DeFi, meme, etc.)
-
-Then: signal cap (max_daily_signals) and re-ranking by confidence.
-
-**LLM short-circuit:** Pairs with `trend_score < min_confidence` are pre-filtered
-before any LLM calls. Only qualifying pairs hit QuantAgent/StrategyAgent, saving
-significant GPU time on bearish days.
+```
+Data (ccxt/yfinance) ──→ TACalculator ──→ Indicators + Structural Levels
+                                                    ↓
+MacroAnalyst (1 LLM call) ──→ macro frame (regime, per-class impact)
+                                                    ↓
+Pre-screen (data-quality only, very permissive) ──→ ~30-36 candidates
+                                                    ↓
+TradeAnalyst (1 LLM call per candidate) ──→ BUY proposals with entry/SL/TP/reasoning
+                                                    ↓
+Python validation (sanity checks) ──→ valid proposals
+                                                    ↓
+RiskReviewer (1 LLM call, ALL proposals) ──→ approved signals with conviction
+                                                    ↓
+Signal cap (business rule) ──→ featured signals ──→ SignalLogger + Discord
+```
 
 ### Hard Rules
 
-- **Python owns all arithmetic.** TA indicators computed by pandas-ta. Entry zones, SL, TP computed in `StrategyAgent._compute_price_levels()`. LLMs interpret and rank — they never compute prices.
-- **Spot only, LONG only.** SHORT proposals are force-converted to SKIP in StrategyAgent and rejected by RiskAgent. No futures, no margin, no leverage.
-- **Symbol format: `BTCUSDT`** (no slash). Normalised once at `MarketDataFetcher`. Every downstream module uses this format.
-- **1d timeframe only.** Pipeline analyses daily candles exclusively — no intraday noise.
-- **Max 2 signals per day** (production). Option B philosophy: silence is the default, only publish when the evidence is overwhelming.
-- **Market-price entry, structure-based SL/TP.** Entry zone at/near current price (subscribers can act immediately). SL below nearest structural support, TP at nearest resistance. R:R computed from actual entry — weak setups (price far from support) are naturally killed by the R:R gate.
-- **Deterministic trend scoring.** 7-signal indicator agreement score (0-1) replaces LLM confidence for gating and conviction tiers. LLM confidence is fallback only.
-- **BTC relative strength filter.** In fear markets, alts underperforming BTC are skipped.
-- **R:R >= 2.0 enforced.** RiskAgent Rule 3 rejects proposals below `take_profit_rr_ratio`.
-- **Capitulation bypass is conservative.** Requires both F&G rising from extreme fear AND RSI divergence on the specific pair. Direction matters more than level.
+- **AI-first, Python validates.** LLM agents decide entry/SL/TP and BUY/SKIP. Python computes TA indicators as input context, validates LLM output for sanity (SL < entry < TP, R:R math, price bounds), and enforces hard business rules.
+- **Spot only, LONG only.** No futures, no margin, no leverage.
+- **R:R >= 1.5 hard floor.** Business integrity rule — subscribers should never get a mathematically unfavorable trade. The LLM decides if a setup is good; Python confirms the math.
+- **1d timeframe only.** Daily candles across all asset classes.
+- **Max 3 featured signals per day** (production). Silence is the default.
 - **Duplicate-safe re-runs.** `UNIQUE(pair, timeframe, report_date)` + `INSERT OR IGNORE`.
+- **Symbol format:** `BTCUSDT` for crypto (no slash), standard tickers for equities (`AAPL`, `SPY`). Normalised once at data fetch. LLM symbol output is overridden with authoritative snapshot symbol.
 
 ### Agent Pattern
 
@@ -142,8 +136,10 @@ Resolved by `check_outcomes.py` via 4h candle walk. SL wins on same-candle ambig
 
 ## Project Status
 
-**V4 is the active plan** (approved 2026-03-30). Multi-asset universe expansion: crypto + US equities + ETFs + commodities. See [ROADMAP.md](ROADMAP.md) for the full plan.
+**V4 is the active plan** (approved 2026-03-30). Multi-asset universe + AI-first architecture. See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 V3 is complete. V2 is complete.
 
-**V4 Phase 1 (in progress):** Package rename `crypto_swing_copilot` → `tenth_floor` is complete. Next: universe restructuring, YFinanceDataFetcher, MacroAgent, gate generalization.
+**V4 Phase 1 (complete):** Multi-asset foundation — universe restructuring, YFinanceDataFetcher, class-leader gates, honest R:R, multi-source outcome checker. All 176 tests pass.
+
+**V4 Phase 1.5 (next):** AI-first signal generation — replace QuantAgent + StrategyAgent with TradeAnalyst (LLM picks entry/SL/TP), replace SentimentAgent with MacroAnalyst, replace RiskAgent with RiskReviewer (portfolio-level LLM reasoning), delete mechanical gates, add Python validation layer.
