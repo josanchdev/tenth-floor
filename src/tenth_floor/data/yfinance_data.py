@@ -200,7 +200,12 @@ class YFinanceDataFetcher:
             # Fetch from day after last cached bar
             last_ts = int(cached["timestamp"].iloc[-1])
             last_date = datetime.fromtimestamp(last_ts / 1000, tz=UTC)
-            start = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+            next_day = last_date + timedelta(days=1)
+            if next_day.date() > datetime.now(UTC).date():
+                # Cache already covers today — nothing to fetch
+                logger.info("Cache up-to-date  %s %s", symbol, timeframe)
+                return cached
+            start = next_day.strftime("%Y-%m-%d")
             logger.info(
                 "Incremental fetch  %s %s  since=%s",
                 symbol, timeframe, start,
