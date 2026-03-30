@@ -75,7 +75,7 @@ server required.
 
 ### Requirements
 
-- Python 3.11+ (3.13 supported)
+- Python 3.12+ (3.13 supported)
 - Local LLM inference server ([vLLM](https://docs.vllm.ai/)
   recommended) serving Qwen3 32B AWQ or any OpenAI-compatible model
 - GPU with >= 24 GB VRAM (RTX 3090 with AWQ quantisation, or

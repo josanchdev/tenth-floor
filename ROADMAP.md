@@ -23,7 +23,7 @@ in bearish markets — the structural problem that led to V4).
 - 26-pair universe with sector mapping + max 1 signal per sector
 - RSI bullish divergence detection + capitulation bypass (Gate 1)
 - DB migration system (numbered SQL files, auto-applied on init)
-- GitHub Actions CI (pytest + ruff + mypy, Python 3.11–3.13)
+- GitHub Actions CI (pytest + ruff + mypy, Python 3.12–3.13)
 - Dynamic price precision for sub-dollar coins
 - Duplicate-safe Discord posting
 - Market-price entries (entry at current price, structure-based SL/TP)

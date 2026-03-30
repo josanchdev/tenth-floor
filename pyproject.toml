@@ -9,7 +9,7 @@ description = "The Tenth Floor AI — multi-asset swing-trade analysis pipeline"
 authors = [{name = "Josanchdev", email = "jsanagui@gmail.com"}]
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 dependencies = [
     "ccxt>=4.3.0",                    # Binance data (read-only)
