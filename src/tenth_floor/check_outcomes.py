@@ -25,13 +25,12 @@ from pathlib import Path
 import pandas as pd
 
 from tenth_floor.data.market_data import MarketDataFetcher
+from tenth_floor.data.yfinance_data import YFinanceDataFetcher
 from tenth_floor.db.signal_logger import SignalLogger
 from tenth_floor.notifications.discord_notifier import DiscordNotifier
+from tenth_floor.universe import load_universe
 
 logger = logging.getLogger(__name__)
-
-# Outcome checking always uses 4h candles regardless of signal timeframe
-_CHECK_TIMEFRAME = "4h"
 
 # Signals unresolved after this many days are marked EXPIRED
 _EXPIRY_DAYS = 14
@@ -44,14 +43,18 @@ def check_outcomes(
     expiry_days: int = _EXPIRY_DAYS,
     dry_run: bool = False,
 ) -> dict:
-    """Walk 4h candles for all active signals and update their status.
+    """Walk candles for all active signals and update their status.
+
+    Uses the universe config to route each symbol to the correct data
+    source (ccxt for crypto, yfinance for equities/ETFs/commodities)
+    and check timeframe (4h for crypto, 1d for equities).
 
     Parameters
     ----------
     db_path:
         Override DB path (useful for testing).
     fetcher:
-        Override MarketDataFetcher (useful for testing).
+        Override MarketDataFetcher for crypto (useful for testing).
     notifier:
         Override DiscordNotifier (useful for testing).
     expiry_days:
@@ -70,6 +73,9 @@ def check_outcomes(
     if notifier is None:
         notifier = DiscordNotifier()
 
+    universe = load_universe()
+    yf_fetcher = YFinanceDataFetcher()
+
     active = sig_logger.get_active_signals()
     if not active:
         logger.info("No active signals to check")
@@ -85,7 +91,17 @@ def check_outcomes(
 
     for pair in pairs:
         try:
-            candle_cache[pair] = fetcher.fetch_ohlcv(pair, _CHECK_TIMEFRAME)
+            try:
+                data_source = universe.data_source_for(pair)
+                check_tf = universe.class_config(universe.asset_class_for(pair)).check_timeframe
+            except KeyError:
+                # Symbol not in current universe (legacy signal) — default to ccxt/4h
+                data_source = "ccxt"
+                check_tf = "4h"
+            if data_source == "yfinance":
+                candle_cache[pair] = yf_fetcher.fetch_ohlcv(pair, check_tf)
+            else:
+                candle_cache[pair] = fetcher.fetch_ohlcv(pair, check_tf)
         except Exception:
             logger.exception("Failed to fetch candles for %s — skipping", pair)
 

@@ -487,7 +487,11 @@ def run_pipeline(
     with SignalLogger() as signal_logger:
         new_signals: list[PlaybookEntry] = []
         for entry in approved:
-            signal_id = signal_logger.log(entry, langfuse_trace_id=trace_id)
+            signal_id = signal_logger.log(
+                entry,
+                langfuse_trace_id=trace_id,
+                asset_class=universe.asset_class_for(entry.symbol),
+            )
             if signal_id:
                 logger.info("Logged signal %s", signal_id)
                 new_signals.append(entry)

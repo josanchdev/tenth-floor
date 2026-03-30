@@ -153,6 +153,11 @@ class StrategyAgent:
 
         proposal = parse_json_response(raw, SetupProposal)
 
+        # Override LLM symbol with authoritative snapshot symbol
+        # (LLM may hallucinate USDT suffix on equity symbols)
+        if proposal.symbol != snapshot.symbol:
+            proposal = proposal.model_copy(update={"symbol": snapshot.symbol})
+
         # Safety: force-reject any SHORT that slips through
         if proposal.direction.value == "short":
             logger.warning("StrategyAgent proposed SHORT for %s — overriding to SKIP", snapshot.symbol)
@@ -238,19 +243,34 @@ class StrategyAgent:
             stop_loss = round(entry_mid - atr * sl_mult, decimals)
             actual_risk = entry_mid - stop_loss
 
-        # --- Take-profit: anchor to nearest resistance above price ---
+        # --- Take-profit: anchor to structural resistance above price ---
+        # Search resistance levels for the first one that meets min R:R.
+        # If the nearest resistance is too close (R:R < min), check higher
+        # levels — a stronger resistance further away is a valid TP.
+        # If NO structural resistance meets min R:R, use the best available
+        # and report the honest R:R.  The R:R gate (Gate 6) will kill weak
+        # setups — never manufacture a fake TP to bypass it.
         above_resistances = [r for r in resistances if r > price]
 
+        take_profit = None
         if above_resistances:
-            candidate_tp = above_resistances[0]  # sorted ascending, first = closest
-            candidate_rr = (candidate_tp - entry_mid) / actual_risk if actual_risk > 0 else 0
+            # First pass: find the first resistance that meets min R:R
+            for candidate_tp in above_resistances:
+                candidate_rr = (candidate_tp - entry_mid) / actual_risk if actual_risk > 0 else 0
+                if candidate_rr >= min_rr:
+                    take_profit = round(candidate_tp, decimals)
+                    break
 
-            if candidate_rr >= min_rr:
-                take_profit = round(candidate_tp, decimals)
-            else:
-                take_profit = round(entry_mid + actual_risk * min_rr, decimals)
-        else:
-            take_profit = round(entry_mid + actual_risk * min_rr, decimals)
+            # Second pass: no resistance meets min R:R — use the highest
+            # available resistance.  Report honest R:R; let the gate decide.
+            if take_profit is None:
+                take_profit = round(above_resistances[-1], decimals)
+
+        if take_profit is None:
+            # No structural resistance above price at all — ATR-based estimate.
+            # This is a genuine fallback (no structure to anchor to), not a hack
+            # to force R:R = 2.0.  The R:R will reflect whatever ATR gives.
+            take_profit = round(entry_mid + atr * 3.0, decimals)
 
         # --- Final R:R ---
         reward = take_profit - entry_mid

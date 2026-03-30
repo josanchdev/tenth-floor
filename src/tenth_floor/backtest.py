@@ -52,7 +52,7 @@ class DayResult:
     killed_rs_gate: int = 0
     killed_confidence_gate: int = 0
     killed_rr_gate: int = 0
-    killed_btc_corr_gate: int = 0
+    killed_leader_corr_gate: int = 0
     killed_signal_cap: int = 0
     proposals: int = 0
     approved: int = 0
@@ -414,7 +414,7 @@ def replay(
         if not btc_is_candidate and len(candidates) > 2:
             candidates.sort(key=lambda x: x[0], reverse=True)
             candidates = candidates[:2]
-        day.killed_btc_corr_gate = pre_corr - len(candidates)
+        day.killed_leader_corr_gate = pre_corr - len(candidates)
 
         # Gate 8: Signal cap
         pre_cap = len(candidates)
@@ -447,7 +447,7 @@ def print_summary(results: list[DayResult]) -> None:
     total_rs = sum(r.killed_rs_gate for r in results)
     total_conf = sum(r.killed_confidence_gate for r in results)
     total_rr = sum(r.killed_rr_gate for r in results)
-    total_corr = sum(r.killed_btc_corr_gate for r in results)
+    total_corr = sum(r.killed_leader_corr_gate for r in results)
     total_cap = sum(r.killed_signal_cap for r in results)
     total_pairs = sum(r.pairs_analyzed for r in results)
 

@@ -117,10 +117,11 @@ class SignalLogger:
                 try:
                     self._conn.executescript(sql)
                 except sqlite3.OperationalError as exc:
-                    # Idempotent: ignore "duplicate column" from ALTER TABLE
-                    # when schema.sql already includes the column (fresh DBs).
-                    if "duplicate column" in str(exc):
-                        logger.debug("Migration %s: column already exists — skipping", version)
+                    # Idempotent: ignore harmless errors from ALTER TABLE
+                    # when schema.sql already reflects the change (fresh DBs).
+                    msg = str(exc).lower()
+                    if "duplicate column" in msg or "no such column" in msg:
+                        logger.debug("Migration %s: already applied to schema — skipping (%s)", version, exc)
                     else:
                         raise
 
@@ -135,6 +136,7 @@ class SignalLogger:
         self,
         entry: PlaybookEntry,
         langfuse_trace_id: str | None = None,
+        asset_class: str | None = None,
     ) -> str | None:
         """Insert an approved signal into the database.
 
@@ -147,6 +149,8 @@ class SignalLogger:
             A ``PlaybookEntry`` from RiskAgent.
         langfuse_trace_id:
             Optional Langfuse trace ID for observability linkage.
+        asset_class:
+            Asset class label (e.g. ``"crypto"``, ``"equity"``).
 
         Returns
         -------
@@ -167,8 +171,8 @@ class SignalLogger:
                 direction, conviction, confidence_score,
                 entry_low, entry_high, stop_loss, take_profit,
                 reward_risk, suggested_risk_pct, strategy_rationale,
-                status, langfuse_trace_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+                status, langfuse_trace_id, asset_class
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, COALESCE(?, 'crypto'))
             """,
             (
                 signal_id, now, entry.report_date, entry.symbol, entry.timeframe,
@@ -178,6 +182,7 @@ class SignalLogger:
                 entry.reward_risk_ratio, entry.suggested_risk_pct,
                 entry.strategy_rationale,
                 langfuse_trace_id,
+                asset_class,
             ),
         )
         self._conn.commit()
@@ -278,7 +283,7 @@ class SignalLogger:
                 run_date, created_at, pairs_analyzed,
                 killed_trend_gate, killed_strategy_skip, killed_volume_gate,
                 killed_rs_gate, killed_confidence_gate, killed_rr_gate,
-                killed_btc_corr_gate, killed_sector_cap, killed_signal_cap,
+                killed_leader_corr_gate, killed_sector_cap, killed_signal_cap,
                 proposals_generated, approved, published, profile,
                 fear_greed_value
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -288,7 +293,7 @@ class SignalLogger:
                 funnel.killed_trend_gate, funnel.killed_strategy_skip,  # type: ignore[union-attr]
                 funnel.killed_volume_gate, funnel.killed_rs_gate,  # type: ignore[union-attr]
                 funnel.killed_confidence_gate, funnel.killed_rr_gate,  # type: ignore[union-attr]
-                funnel.killed_btc_corr_gate, funnel.killed_sector_cap,  # type: ignore[union-attr]
+                funnel.killed_leader_corr_gate, funnel.killed_sector_cap,  # type: ignore[union-attr]
                 funnel.killed_signal_cap,  # type: ignore[union-attr]
                 funnel.proposals_generated, funnel.approved,  # type: ignore[union-attr]
                 funnel.published, _active_profile,  # type: ignore[union-attr]

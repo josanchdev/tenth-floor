@@ -136,6 +136,11 @@ class QuantAgent:
         )
 
         signal = parse_json_response(raw, QuantSignal)
+
+        # Override LLM symbol with authoritative snapshot symbol
+        if signal.symbol != snapshot.symbol:
+            signal = signal.model_copy(update={"symbol": snapshot.symbol})
+
         logger.info(
             "QuantSignal  %s %s  regime=%s  confidence=%.2f  signals=%d",
             signal.symbol, signal.timeframe,
