@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from crypto_swing_copilot.data.models import (
+from tenth_floor.data.models import (
     PairSnapshot,
     PlaybookEntry,
     PlaybookVerdict,
@@ -20,7 +20,7 @@ from crypto_swing_copilot.data.models import (
     TAIndicators,
     TrendRegime,
 )
-from crypto_swing_copilot.main import run_pipeline
+from tenth_floor.main import run_pipeline
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -115,7 +115,7 @@ def _make_entry(**overrides) -> PlaybookEntry:
 # Patches
 # ---------------------------------------------------------------------------
 
-_PATCH_BASE = "crypto_swing_copilot.main"
+_PATCH_BASE = "tenth_floor.main"
 
 
 def _build_patches(
@@ -299,7 +299,7 @@ class TestCLI:
     """Test CLI argument parsing."""
 
     def test_parse_args_defaults(self):
-        from crypto_swing_copilot.main import _parse_args
+        from tenth_floor.main import _parse_args
 
         args = _parse_args([])
         assert args.pairs is None
@@ -307,13 +307,13 @@ class TestCLI:
         assert args.log_level == "INFO"
 
     def test_parse_args_with_pairs(self):
-        from crypto_swing_copilot.main import _parse_args
+        from tenth_floor.main import _parse_args
 
         args = _parse_args(["BTCUSDT", "ETHUSDT"])
         assert args.pairs == ["BTCUSDT", "ETHUSDT"]
 
     def test_parse_args_dry_run(self):
-        from crypto_swing_copilot.main import _parse_args
+        from tenth_floor.main import _parse_args
 
         args = _parse_args(["--dry-run"])
         assert args.dry_run is True

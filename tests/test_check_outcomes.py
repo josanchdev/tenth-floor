@@ -8,14 +8,14 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 
-from crypto_swing_copilot.check_outcomes import _process_signal, check_outcomes
-from crypto_swing_copilot.data.models import (
+from tenth_floor.check_outcomes import _process_signal, check_outcomes
+from tenth_floor.data.models import (
     PlaybookEntry,
     PlaybookVerdict,
     SetupAction,
     SignalDirection,
 )
-from crypto_swing_copilot.db.signal_logger import SignalLogger
+from tenth_floor.db.signal_logger import SignalLogger
 
 # ---------------------------------------------------------------------------
 # Helpers

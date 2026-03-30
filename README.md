@@ -1,9 +1,10 @@
 # The Tenth Floor AI
 
-> Glass-box quantitative crypto research desk — institutional-grade
-> swing-trade signals for a paid Discord community.
+> Multi-asset AI swing-trade analysis — institutional-grade signals
+> across crypto, US equities, ETFs, and commodities for a paid Discord
+> community.
 
-Subscribers receive a daily signal embed with full mathematical and
+Subscribers receive daily signal embeds with full mathematical and
 agentic reasoning. They execute trades manually on their own accounts.
 The system never touches money, never places orders, never manages a
 budget.
@@ -12,17 +13,17 @@ budget.
 
 ## How It Works
 
-The pipeline fetches Binance spot OHLCV data for 26 pairs on the daily
-timeframe, computes technical indicators deterministically in Python,
-then routes enriched snapshots through 7 sequential filtering gates and
-a four-agent LLM pipeline. Approved signals (max 2/day) are published
-to Discord and logged to SQLite. Signal resolutions (TP hit, SL hit,
-expired) are also posted to Discord for full transparency.
+The pipeline fetches daily OHLCV data, computes technical indicators
+deterministically in Python, then routes enriched snapshots through 7
+sequential filtering gates and a four-agent LLM pipeline. Approved
+signals (max 2-3/day) are published to Discord and logged to SQLite.
+Signal resolutions (TP hit, SL hit, expired) are also posted for full
+transparency.
 
 ```
-Binance OHLCV  ──┐
-                 ├──▶  Feature Engine  ──▶  Quant + Sentiment + Strategy + Risk  ──▶  Discord + SQLite
-Fear & Greed   ──┘       (Python)                 (Qwen3 32B via vLLM)
+Data sources     ──┐
+(ccxt, yfinance)   ├──▶  Feature Engine  ──▶  Quant + Sentiment + Strategy + Risk  ──▶  Discord + SQLite
+Sentiment feeds  ──┘       (Python)                 (Qwen3 32B via vLLM)
 ```
 
 **Hard constraints:** spot only · no leverage · no futures · no
@@ -35,45 +36,37 @@ diagram with Mermaid flowchart.
 
 ## Project Status
 
+### V4 (active — approved 2026-03-30)
+
+Multi-asset universe expansion. The core problem: 26 crypto pairs are
+one correlated market — when BTC enters a downtrend, all pairs fail the
+gates simultaneously. V4 expands to ~36 structurally uncorrelated assets
+so the pipeline produces signals in any market regime.
+
+See [ROADMAP.md](ROADMAP.md) for the full V4 plan.
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| Phase 1 — Foundation | Package rename, universe restructure, YFinanceDataFetcher | In progress |
+| Phase 2 — Sentiment & Macro | MacroAgent, VIX/DXY/yields, RSS expansion | Planned |
+| Phase 3 — Gate generalization | Market-leader gates, two-pass scheduling, conditional entries | Planned |
+| Phase 4 — Validation | 90-day backtest, equity validation mode, MacroAgent review | Planned |
+| Phase 5 — Launch | Multi-asset Discord channels, tweet drafter, dashboard updates | Planned |
+
+### V3 (complete — 2026-03-27)
+
+Pipeline diagnostics, backtester, LLM retry, config profiles, failure
+alerting, LLM short-circuit, 26-pair universe, sector diversity cap,
+RSI divergence + capitulation bypass, DB migrations, CI, dynamic price
+precision, duplicate-safe Discord, market-price entries.
+
 ### V2 (complete)
 
-| Layer | Status |
-|---|---|
-| Data layer (market data, sentiment, models) | Complete |
-| Feature engine (TA indicators, snapshot assembly) | Complete |
-| Agent layer (Quant, Sentiment, Strategy, Risk) | Complete |
-| LLM backend (local Qwen3 32B AWQ via vLLM) | Complete |
-| SQLite signal logger + outcome checker | Complete |
-| Discord webhook notifier + outcome notifications | Complete |
-| Daily orchestrator (`main.py`) | Complete |
-| Admin dashboard (Streamlit) | Complete |
-| Structure-based S/R price levels | Complete |
-| Deterministic trend scoring (7-signal agreement) | Complete |
-| BTC relative strength filter | Complete |
+Full pipeline: data layer, feature engine, 4-agent LLM pipeline, SQLite
+logging, outcome checker, Discord notifier, admin dashboard, deterministic
+trend scoring, BTC relative strength filter.
 
-### V3 (Tier 1 complete)
-
-| Layer | Status |
-|---|---|
-| Pipeline diagnostics & funnel report | Complete |
-| Historical replay / backtester | Complete |
-| LLM retry logic + timeout config | Complete |
-| Config profiles (validation / production) | Complete |
-| Failure alerting (Discord error embeds) | Complete |
-| LLM short-circuit (pre-filter by trend_score) | Complete |
-| 26-pair universe + sector diversity cap | Complete |
-| DB migration system | Complete |
-| GitHub Actions CI | Complete |
-| Dynamic price precision | Complete |
-| Duplicate-safe Discord posting | Complete |
-| Market-price entries | Complete |
-| Langfuse prompt management | Planned |
-| Richer sentiment (more RSS feeds) | Planned |
-| Structured logging | Planned |
-
-See [ROADMAP.md](ROADMAP.md) for the full V3 plan.
-
-**145 tests** across 9 files. All mocked — no network calls, no LLM
+**176 tests** across 11 files. All mocked — no network calls, no LLM
 server required.
 
 ---
@@ -95,7 +88,7 @@ server required.
 
 ```bash
 git clone <repo>
-cd crypto-swing-copilot
+cd the-tenth-floor
 pip install -e ".[dev]"
 ```
 
@@ -127,20 +120,20 @@ cp .env.example .env
 ### Run the pipeline
 
 ```bash
-# Full universe (26 pairs, 1d timeframe)
-python -m crypto_swing_copilot.main
+# Full universe
+python -m tenth_floor.main
 
 # Specific pairs
-python -m crypto_swing_copilot.main BTCUSDT ETHUSDT
+python -m tenth_floor.main BTCUSDT ETHUSDT
 
 # Dry run (no DB writes, no Discord posts)
-python -m crypto_swing_copilot.main --dry-run
+python -m tenth_floor.main --dry-run
 ```
 
 ### Run tests
 
 ```bash
-pytest          # all 144 tests
+pytest          # all 176 tests
 pytest -v       # verbose output
 pytest --cov    # with coverage report
 ```
@@ -154,7 +147,7 @@ cron, outcome checking, and monitoring.
 
 Each approved signal carries:
 
-- **Pair** and timeframe (1d)
+- **Symbol** and timeframe (1d)
 - **Entry zone** at/near current market price
 - **Stop-loss** below swing low with ATR buffer
 - **Take-profit** at nearest resistance (R:R >= 2.0 enforced)
@@ -163,9 +156,9 @@ Each approved signal carries:
 - **Strategy rationale** (LLM-generated, full reasoning)
 - **Outcome notifications** — TP hit, SL hit, and expiry updates posted to Discord
 
-Max 2 signals per day. Silence is the default — only the strongest
-setups are published. See [docs/signals.md](docs/signals.md) for the
-full specification.
+Max 2 signals per day (production). Silence is the default — only the
+strongest setups are published. See [docs/signals.md](docs/signals.md)
+for the full specification.
 
 ---
 
@@ -191,9 +184,9 @@ full specification.
 ## Repository Layout
 
 ```
-crypto-swing-copilot/
+the-tenth-floor/
 ├── config/
-│   ├── universe.json          # 26 Binance spot pairs + sector mapping
+│   ├── universe.json          # Asset universe + sector mapping
 │   ├── risk_profile.json      # Conviction tiers, SL/TP parameters
 │   ├── models.yaml            # LLM provider + per-agent config
 │   ├── services.yaml          # External service configuration
@@ -204,11 +197,14 @@ crypto-swing-copilot/
 │   ├── architecture.md        # System design + Mermaid diagram
 │   ├── signals.md             # Signal output specification
 │   └── deployment.md          # Production deployment guide
-├── src/crypto_swing_copilot/
+├── src/tenth_floor/
 │   ├── main.py                # Daily pipeline orchestrator
 │   ├── config.py              # Central path resolver
+│   ├── backtest.py            # Historical replay / backtester
+│   ├── check_outcomes.py      # Standalone TP/SL resolution
+│   ├── post_tweet.py          # X/Twitter auto-poster
 │   ├── data/
-│   │   ├── market_data.py     # Binance OHLCV via ccxt + Parquet cache
+│   │   ├── market_data.py     # OHLCV via ccxt + Parquet cache
 │   │   ├── sentiment.py       # Fear & Greed Index + RSS headlines
 │   │   └── models.py          # Pydantic v2 contracts for every layer
 │   ├── features/
@@ -224,9 +220,15 @@ crypto-swing-copilot/
 │   │   └── signal_logger.py   # SQLite signal persistence
 │   ├── notifications/
 │   │   └── discord_notifier.py # Discord webhook poster
-│   └── check_outcomes.py      # Standalone TP/SL resolution
-├── tests/                     # Unit tests, all mocked
-├── ROADMAP.md                 # V3 implementation plan
+│   ├── social/
+│   │   ├── tweet_drafter.py   # LLM-powered tweet drafting
+│   │   ├── tweet_poster.py    # X/Twitter API posting
+│   │   └── discord_draft.py   # Tweet drafts to Discord
+│   └── dashboard/
+│       ├── app.py             # Streamlit admin dashboard
+│       └── queries.py         # SQL + pandas queries for dashboard
+├── tests/                     # 176 unit tests, all mocked
+├── ROADMAP.md                 # V4 implementation plan
 └── GTM.md                     # Go-to-market plan
 ```
 

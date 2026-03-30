@@ -6,13 +6,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from crypto_swing_copilot.data.models import (
+from tenth_floor.data.models import (
     PairSnapshot,
     RSSHeadline,
     SentimentSnapshot,
     TAIndicators,
 )
-from crypto_swing_copilot.features.pair_snapshot import SnapshotBuilder
+from tenth_floor.features.pair_snapshot import SnapshotBuilder
 
 # ---------------------------------------------------------------------------
 # Helpers

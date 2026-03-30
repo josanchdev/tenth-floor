@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from crypto_swing_copilot.social.tweet_drafter import (
+from tenth_floor.social.tweet_drafter import (
     TweetDrafter,
     TweetDraftFile,
     TweetDraftResponse,
@@ -111,9 +111,9 @@ class TestFGLabel:
 # ---------------------------------------------------------------------------
 
 class TestTweetDrafter:
-    @patch("crypto_swing_copilot.social.tweet_drafter.call_llm", return_value=MOCK_LLM_RESPONSE)
+    @patch("tenth_floor.social.tweet_drafter.call_llm", return_value=MOCK_LLM_RESPONSE)
     def test_draft_generates_file(self, mock_llm: MagicMock, db_path: Path, tmp_path: Path) -> None:
-        with patch("crypto_swing_copilot.social.tweet_drafter.DATA_DIR", tmp_path):
+        with patch("tenth_floor.social.tweet_drafter.DATA_DIR", tmp_path):
             drafter = TweetDrafter(db_path=db_path)
             draft = drafter.draft("2026-03-28")
             drafter.close()
@@ -129,7 +129,7 @@ class TestTweetDrafter:
         data = json.loads(saved.read_text())
         assert data["report_date"] == "2026-03-28"
 
-    @patch("crypto_swing_copilot.social.tweet_drafter.call_llm", return_value=MOCK_LLM_RESPONSE)
+    @patch("tenth_floor.social.tweet_drafter.call_llm", return_value=MOCK_LLM_RESPONSE)
     def test_draft_truncates_long_tweets(self, mock_llm: MagicMock, db_path: Path, tmp_path: Path) -> None:
         long_response = json.dumps({
             "options": [{
@@ -141,7 +141,7 @@ class TestTweetDrafter:
         })
         mock_llm.return_value = long_response
 
-        with patch("crypto_swing_copilot.social.tweet_drafter.DATA_DIR", tmp_path):
+        with patch("tenth_floor.social.tweet_drafter.DATA_DIR", tmp_path):
             drafter = TweetDrafter(db_path=db_path)
             draft = drafter.draft("2026-03-28")
             drafter.close()

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from crypto_swing_copilot.data.models import (
+from tenth_floor.data.models import (
     PairSnapshot,
     PlaybookVerdict,
     QuantSignal,
@@ -118,8 +118,8 @@ class TestQuantAgent:
             "reasoning": "Bullish trend.",
         })
 
-        with patch("crypto_swing_copilot.agents.quant_agent.call_llm", return_value=mock_response):
-            from crypto_swing_copilot.agents.quant_agent import QuantAgent
+        with patch("tenth_floor.agents.quant_agent.call_llm", return_value=mock_response):
+            from tenth_floor.agents.quant_agent import QuantAgent
             agent = QuantAgent()
             result = agent.run(sample_snapshot)
 
@@ -129,7 +129,7 @@ class TestQuantAgent:
 
     def test_prompt_contains_indicators(self, sample_snapshot: PairSnapshot) -> None:
         """Prompt should include TA indicator values."""
-        from crypto_swing_copilot.agents.quant_agent import QuantAgent
+        from tenth_floor.agents.quant_agent import QuantAgent
         prompt = QuantAgent._build_prompt(sample_snapshot)
         assert "62000.0" in prompt  # EMA 20
         assert "RSI 14: 55.0" in prompt
@@ -151,8 +151,8 @@ class TestSentimentAgent:
             "fear_greed_value": 65,
         })
 
-        with patch("crypto_swing_copilot.agents.sentiment_agent.call_llm", return_value=mock_response):
-            from crypto_swing_copilot.agents.sentiment_agent import SentimentAgent
+        with patch("tenth_floor.agents.sentiment_agent.call_llm", return_value=mock_response):
+            from tenth_floor.agents.sentiment_agent import SentimentAgent
             agent = SentimentAgent()
             result = agent.run(sample_sentiment_snapshot)
 
@@ -187,8 +187,8 @@ class TestStrategyAgent:
             "confluence_factors": ["EMA alignment"],
         })
 
-        with patch("crypto_swing_copilot.agents.strategy_agent.call_llm", return_value=mock_response):
-            from crypto_swing_copilot.agents.strategy_agent import StrategyAgent
+        with patch("tenth_floor.agents.strategy_agent.call_llm", return_value=mock_response):
+            from tenth_floor.agents.strategy_agent import StrategyAgent
             agent = StrategyAgent()
             result = agent.run(sample_snapshot, sample_quant_signal, sample_sentiment_signal)
 
@@ -217,8 +217,8 @@ class TestStrategyAgent:
             "confluence_factors": [],
         })
 
-        with patch("crypto_swing_copilot.agents.strategy_agent.call_llm", return_value=mock_response):
-            from crypto_swing_copilot.agents.strategy_agent import StrategyAgent
+        with patch("tenth_floor.agents.strategy_agent.call_llm", return_value=mock_response):
+            from tenth_floor.agents.strategy_agent import StrategyAgent
             agent = StrategyAgent()
             result = agent.run(sample_snapshot, sample_quant_signal, sample_sentiment_signal)
 
@@ -231,8 +231,8 @@ class TestComputePriceLevels:
     """Test that _compute_price_levels uses market-price entry with structural SL/TP."""
 
     def _make_agent(self):
-        with patch("crypto_swing_copilot.agents.strategy_agent.load_agent_config", return_value={}):
-            from crypto_swing_copilot.agents.strategy_agent import StrategyAgent
+        with patch("tenth_floor.agents.strategy_agent.load_agent_config", return_value={}):
+            from tenth_floor.agents.strategy_agent import StrategyAgent
             return StrategyAgent()
 
     def test_entry_at_market_price(self) -> None:
@@ -337,8 +337,8 @@ class TestComputePriceLevels:
 class TestRiskAgent:
     def test_approve_valid_long(self, sample_proposal: SetupProposal) -> None:
         """High-confidence LONG → APPROVED, conviction=high, risk=2%."""
-        with patch("crypto_swing_copilot.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Strong setup approved."}]'):
-            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Strong setup approved."}]'):
+            from tenth_floor.agents.risk_agent import RiskAgent
             agent = RiskAgent()
             entries = agent.run([(sample_proposal, 0.82)])
 
@@ -350,8 +350,8 @@ class TestRiskAgent:
 
     def test_approve_standard_conviction(self, sample_proposal: SetupProposal) -> None:
         """Mid-confidence LONG → APPROVED, conviction=standard, risk=1%."""
-        with patch("crypto_swing_copilot.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Acceptable setup."}]'):
-            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Acceptable setup."}]'):
+            from tenth_floor.agents.risk_agent import RiskAgent
             agent = RiskAgent()
             entries = agent.run([(sample_proposal, 0.71)])
 
@@ -371,8 +371,8 @@ class TestRiskAgent:
             reward_risk_ratio=2.0, rationale="Bearish.",
         )
 
-        with patch("crypto_swing_copilot.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Rejected."}]'):
-            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Rejected."}]'):
+            from tenth_floor.agents.risk_agent import RiskAgent
             agent = RiskAgent()
             entries = agent.run([(short_proposal, 0.85)])
 
@@ -381,8 +381,8 @@ class TestRiskAgent:
 
     def test_reject_low_confidence(self, sample_proposal: SetupProposal) -> None:
         """Confidence below 0.65 threshold → REJECTED."""
-        with patch("crypto_swing_copilot.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Low confidence."}]'):
-            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Low confidence."}]'):
+            from tenth_floor.agents.risk_agent import RiskAgent
             agent = RiskAgent()
             entries = agent.run([(sample_proposal, 0.50)])
 
@@ -401,8 +401,8 @@ class TestRiskAgent:
             reward_risk_ratio=1.5, rationale="Weak R:R.",
         )
 
-        with patch("crypto_swing_copilot.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Low R:R."}]'):
-            from crypto_swing_copilot.agents.risk_agent import RiskAgent
+        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Low R:R."}]'):
+            from tenth_floor.agents.risk_agent import RiskAgent
             agent = RiskAgent()
             entries = agent.run([(low_rr_proposal, 0.82)])
 
@@ -418,29 +418,29 @@ class TestRiskAgent:
 class TestCleanJsonResponse:
     def test_strips_think_tags(self) -> None:
         """Qwen3 <think> blocks should be stripped."""
-        from crypto_swing_copilot.agents.base import clean_json_response
+        from tenth_floor.agents.base import clean_json_response
         raw = '<think>Let me analyze this...</think>{"key": "value"}'
         assert clean_json_response(raw) == '{"key": "value"}'
 
     def test_strips_code_fences(self) -> None:
-        from crypto_swing_copilot.agents.base import clean_json_response
+        from tenth_floor.agents.base import clean_json_response
         raw = '```json\n{"key": "value"}\n```'
         assert clean_json_response(raw) == '{"key": "value"}'
 
     def test_strips_both(self) -> None:
-        from crypto_swing_copilot.agents.base import clean_json_response
+        from tenth_floor.agents.base import clean_json_response
         raw = '<think>thinking...</think>\n```json\n{"key": "value"}\n```'
         assert clean_json_response(raw) == '{"key": "value"}'
 
     def test_passthrough_clean_json(self) -> None:
-        from crypto_swing_copilot.agents.base import clean_json_response
+        from tenth_floor.agents.base import clean_json_response
         raw = '{"key": "value"}'
         assert clean_json_response(raw) == '{"key": "value"}'
 
 
 class TestParseJsonResponse:
     def test_valid_quant_signal(self) -> None:
-        from crypto_swing_copilot.agents.base import parse_json_response
+        from tenth_floor.agents.base import parse_json_response
         raw = json.dumps({
             "symbol": "BTCUSDT", "timeframe": "4h",
             "trend_regime": "uptrend",
@@ -451,11 +451,11 @@ class TestParseJsonResponse:
         assert result.confidence == 0.75
 
     def test_invalid_json_raises(self) -> None:
-        from crypto_swing_copilot.agents.base import parse_json_response
+        from tenth_floor.agents.base import parse_json_response
         with pytest.raises(ValueError, match="Invalid JSON"):
             parse_json_response("not json at all", QuantSignal)
 
     def test_schema_mismatch_raises(self) -> None:
-        from crypto_swing_copilot.agents.base import parse_json_response
+        from tenth_floor.agents.base import parse_json_response
         with pytest.raises(ValueError, match="Schema validation"):
             parse_json_response('{"wrong": "schema"}', QuantSignal)

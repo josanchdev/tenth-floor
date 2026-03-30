@@ -1,5 +1,10 @@
 # Deployment & Operations
 
+> **Note:** This document describes the current V3 deployment (crypto-only).
+> V4 will add two-pass scheduling (equities at 21:30 UTC, crypto at 00:15 UTC),
+> yfinance data fetching, and market calendar awareness. See
+> [ROADMAP.md](../ROADMAP.md) for details.
+
 This guide covers running The Tenth Floor AI in production: inference
 server setup, daily scheduling, outcome tracking, and monitoring.
 
@@ -65,17 +70,17 @@ WantedBy=multi-user.target
 ### Manual Run
 
 ```bash
-# Full universe (26 pairs, 1d timeframe)
-python -m crypto_swing_copilot.main
+# Full universe (1d timeframe)
+python -m tenth_floor.main
 
 # Subset of pairs
-python -m crypto_swing_copilot.main BTCUSDT ETHUSDT SOLUSDT
+python -m tenth_floor.main BTCUSDT ETHUSDT SOLUSDT
 
 # Dry run — prints signals without DB writes or Discord posts
-python -m crypto_swing_copilot.main --dry-run
+python -m tenth_floor.main --dry-run
 
 # Verbose logging
-python -m crypto_swing_copilot.main --log-level DEBUG
+python -m tenth_floor.main --log-level DEBUG
 ```
 
 Typical runtime: ~30 seconds for 1 pair, ~3 minutes for the full 26-
@@ -89,10 +94,10 @@ Run the pipeline daily. Choose a time after the 1d candle close
 
 ```cron
 # Run pipeline at 00:15 UTC daily
-15 0 * * * cd /path/to/crypto-swing-copilot && /path/to/venv/bin/python -m crypto_swing_copilot.main >> logs/pipeline.log 2>&1
+15 0 * * * cd /path/to/the-tenth-floor && /path/to/venv/bin/python -m tenth_floor.main >> logs/pipeline.log 2>&1
 
 # Run outcome checker at 06:00 UTC daily
-0 6 * * * cd /path/to/crypto-swing-copilot && /path/to/venv/bin/python -m crypto_swing_copilot.check_outcomes >> logs/outcomes.log 2>&1
+0 6 * * * cd /path/to/the-tenth-floor && /path/to/venv/bin/python -m tenth_floor.check_outcomes >> logs/outcomes.log 2>&1
 ```
 
 ---
@@ -104,10 +109,10 @@ signals by walking 4h candles:
 
 ```bash
 # Check all PENDING/OPEN signals
-python -m crypto_swing_copilot.check_outcomes
+python -m tenth_floor.check_outcomes
 
 # Preview without writing to DB
-python -m crypto_swing_copilot.check_outcomes --dry-run
+python -m tenth_floor.check_outcomes --dry-run
 ```
 
 ### Signal Lifecycle

@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from crypto_swing_copilot.data.models import RSSHeadline, SentimentSnapshot
-from crypto_swing_copilot.data.sentiment import SentimentFetcher
+from tenth_floor.data.models import RSSHeadline, SentimentSnapshot
+from tenth_floor.data.sentiment import SentimentFetcher
 
 # ---------------------------------------------------------------------------
 # Fixtures

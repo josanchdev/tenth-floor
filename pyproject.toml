@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "crypto-swing-copilot"
+name = "the-tenth-floor"
 version = "0.1.0"
-description = "The Tenth Floor AI — glass-box crypto signal provider"
+description = "The Tenth Floor AI — multi-asset swing-trade analysis pipeline"
 authors = [{name = "Josanchdev", email = "jsanagui@gmail.com"}]
 license = "MIT"
 readme = "README.md"
@@ -39,11 +39,11 @@ dev = [
 ]
 
 [project.scripts]
-run-daily = "crypto_swing_copilot.main:main"
+run-daily = "tenth_floor.main:main"
 
 # Tell hatchling that the Python package lives under src/
 [tool.hatch.build.targets.wheel]
-packages = ["src/crypto_swing_copilot"]
+packages = ["src/tenth_floor"]
 
 [tool.ruff]
 line-length = 100

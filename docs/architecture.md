@@ -1,5 +1,10 @@
 # System Architecture
 
+> **Note:** This document describes the current V3 architecture (crypto-only,
+> 26 pairs). V4 is expanding to multi-asset (~36 assets across crypto,
+> equities, ETFs, and commodities). See [ROADMAP.md](../ROADMAP.md) for the
+> V4 plan. This document will be updated as V4 modules land.
+
 ## Pipeline Overview
 
 The Tenth Floor AI runs a six-step daily pipeline orchestrated by
@@ -178,7 +183,7 @@ tracked per signal during the walk.
 
 ## Module Reference
 
-### `src/crypto_swing_copilot/`
+### `src/tenth_floor/`
 
 | File | Responsibility |
 |---|---|

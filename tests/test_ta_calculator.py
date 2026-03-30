@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from crypto_swing_copilot.data.models import TAIndicators
-from crypto_swing_copilot.features.ta_calculator import TACalculator
+from tenth_floor.data.models import TAIndicators
+from tenth_floor.features.ta_calculator import TACalculator
 
 # ---------------------------------------------------------------------------
 # Helpers

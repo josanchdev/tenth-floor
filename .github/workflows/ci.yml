@@ -28,7 +28,7 @@ jobs:
         run: ruff check src/ tests/
 
       - name: Type check (mypy)
-        run: mypy src/crypto_swing_copilot/
+        run: mypy src/tenth_floor/
         continue-on-error: true  # mypy has some pre-existing warnings
 
       - name: Tests

@@ -7,13 +7,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from crypto_swing_copilot.data.models import (
+from tenth_floor.data.models import (
     PlaybookEntry,
     PlaybookVerdict,
     SetupAction,
     SignalDirection,
 )
-from crypto_swing_copilot.notifications.discord_notifier import (
+from tenth_floor.notifications.discord_notifier import (
     COLOR_GOLD,
     COLOR_GREEN,
     COLOR_GREY,

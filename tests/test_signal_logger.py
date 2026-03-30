@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from crypto_swing_copilot.data.models import (
+from tenth_floor.data.models import (
     PlaybookEntry,
     PlaybookVerdict,
     SetupAction,
     SignalDirection,
 )
-from crypto_swing_copilot.db.signal_logger import SignalLogger
+from tenth_floor.db.signal_logger import SignalLogger
 
 
 @pytest.fixture

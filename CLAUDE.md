@@ -20,16 +20,16 @@ pytest -k "dedup" -v                               # by pattern
 # Lint & type check
 ruff check src/ tests/                 # lint (E, F, I, UP, B rules; line-length 100)
 ruff check --fix src/                  # auto-fix
-mypy src/crypto_swing_copilot/         # type check (Python 3.11 target)
+mypy src/tenth_floor/                  # type check (Python 3.11 target)
 
 # Run pipeline
-python -m crypto_swing_copilot.main                    # full 13-pair universe
-python -m crypto_swing_copilot.main BTCUSDT ETHUSDT    # specific pairs
-python -m crypto_swing_copilot.main --dry-run           # no DB writes, no Discord post
+python -m tenth_floor.main                    # full universe
+python -m tenth_floor.main BTCUSDT ETHUSDT    # specific pairs
+python -m tenth_floor.main --dry-run           # no DB writes, no Discord post
 
 # Outcome checker (resolves PENDING/OPEN signals against real candles)
-python -m crypto_swing_copilot.check_outcomes
-python -m crypto_swing_copilot.check_outcomes --dry-run
+python -m tenth_floor.check_outcomes
+python -m tenth_floor.check_outcomes --dry-run
 
 # Operational script (starts vLLM + runs pipeline + outcomes + DB backup)
 ./run.sh                    # full run
@@ -38,23 +38,25 @@ python -m crypto_swing_copilot.check_outcomes --dry-run
 ./run.sh --outcomes-only    # skip pipeline, just check outcomes
 
 # Tweet auto-poster
-python -m crypto_swing_copilot.post_tweet                # draft + interactive post
-python -m crypto_swing_copilot.post_tweet --draft-only   # generate draft only (no posting)
-python -m crypto_swing_copilot.post_tweet 2026-03-28     # specific date
+python -m tenth_floor.post_tweet                # draft + interactive post
+python -m tenth_floor.post_tweet --draft-only   # generate draft only (no posting)
+python -m tenth_floor.post_tweet 2026-03-28     # specific date
 
 # Dashboard
-streamlit run src/crypto_swing_copilot/dashboard/app.py
+streamlit run src/tenth_floor/dashboard/app.py
 ```
 
 ## Architecture
 
-**The Tenth Floor AI** is a multi-agent LLM pipeline that publishes daily crypto swing-trade signals to a paid Discord community. It runs locally with Qwen3-32B-AWQ on vLLM.
+**The Tenth Floor AI** is a multi-agent LLM pipeline that publishes daily swing-trade signals to a paid Discord community. It runs locally with Qwen3-32B-AWQ on vLLM.
+
+V4 is expanding from crypto-only (26 pairs) to a multi-asset universe: crypto, US equities, ETFs, and commodities (~36 assets). The pipeline, gates, and philosophy remain the same — the input universe is what changes. See [ROADMAP.md](ROADMAP.md) for the full V4 plan.
 
 ### Pipeline Flow (main.py → `run_pipeline()`)
 
 ```
-Binance OHLCV (ccxt) ──→ TACalculator ──→ SnapshotBuilder ──→ PairSnapshot
-Fear & Greed + RSS   ──────────────────────────────────────↗
+Data sources (ccxt/yfinance) ──→ TACalculator ──→ SnapshotBuilder ──→ PairSnapshot
+Sentiment (F&G, RSS)         ──────────────────────────────────────↗
 
 PairSnapshot ──→ QuantAgent (trend + confidence)
               ──→ StrategyAgent (LONG proposal or SKIP, with entry/SL/TP)
@@ -70,10 +72,10 @@ All proposals ──→ 7 filtering gates ──→ RiskAgent (conviction tiers)
 
 1. **Trend regime** — `STRONG_DOWNTREND` → skip pair entirely.
    *Exception:* capitulation bypass allows through when F&G is rising from
-   extreme fear (< 25, rising from 7-day trough by ≥ 3 pts) AND RSI bullish
+   extreme fear (< 25, rising from 7-day trough by >= 3 pts) AND RSI bullish
    divergence is detected on the pair.
 2. **StrategyAgent** — LLM decides BUY or SKIP based on 2+ strong/weak technical signals
-3. **Volume confirmation** — in downtrends, BUY requires volume >= 1.3× SMA-20
+3. **Volume confirmation** — in downtrends, BUY requires volume >= 1.3x SMA-20
 4. **BTC relative strength** — in fear markets, alts underperforming BTC → skip
 5. **RiskAgent confidence** — below `min_setup_confidence` → rejected
 6. **RiskAgent R:R** — below `take_profit_rr_ratio` (2.0) → rejected
@@ -94,7 +96,7 @@ significant GPU time on bearish days.
 - **1d timeframe only.** Pipeline analyses daily candles exclusively — no intraday noise.
 - **Max 2 signals per day** (production). Option B philosophy: silence is the default, only publish when the evidence is overwhelming.
 - **Market-price entry, structure-based SL/TP.** Entry zone at/near current price (subscribers can act immediately). SL below nearest structural support, TP at nearest resistance. R:R computed from actual entry — weak setups (price far from support) are naturally killed by the R:R gate.
-- **Deterministic trend scoring.** 7-signal indicator agreement score (0–1) replaces LLM confidence for gating and conviction tiers. LLM confidence is fallback only.
+- **Deterministic trend scoring.** 7-signal indicator agreement score (0-1) replaces LLM confidence for gating and conviction tiers. LLM confidence is fallback only.
 - **BTC relative strength filter.** In fear markets, alts underperforming BTC are skipped.
 - **R:R >= 2.0 enforced.** RiskAgent Rule 3 rejects proposals below `take_profit_rr_ratio`.
 - **Capitulation bypass is conservative.** Requires both F&G rising from extreme fear AND RSI divergence on the specific pair. Direction matters more than level.
@@ -123,7 +125,7 @@ All config in `config/`. No secrets — those go in `.env` (see `.env.example`).
 
 **Config profiles:** `config/profiles/production.json` (confidence 0.65, max 2 signals) and `config/profiles/validation.json` (confidence 0.57, max 3 signals). Switch via `--profile validation|production`. Base `risk_profile.json` holds production defaults; profiles overlay specific values.
 
-Path resolution: `config.py` walks up from CWD looking for `pyproject.toml`. Override with `CRYPTO_SWING_COPILOT_ROOT` env var.
+Path resolution: `config.py` walks up from CWD looking for `pyproject.toml`. Override with `TENTH_FLOOR_ROOT` env var.
 
 ### Typed Contracts
 
@@ -140,7 +142,8 @@ Resolved by `check_outcomes.py` via 4h candle walk. SL wins on same-candle ambig
 
 ## Project Status
 
-V2 is complete. V3 Tier 1 is complete — see [ROADMAP.md](ROADMAP.md) for the full plan.
-Tier 1 delivered: pipeline diagnostics/funnel, backtester, retry logic, stale prompt fixes, config profiles, failure alerting, capitulation bypass.
-V3 Tier 1 also delivered: LLM short-circuit, 26-pair universe, sector diversity cap, DB migrations, CI, dynamic price precision, duplicate-safe Discord, market-price entries.
-Remaining V3: Langfuse prompt management, richer sentiment, structured logging.
+**V4 is the active plan** (approved 2026-03-30). Multi-asset universe expansion: crypto + US equities + ETFs + commodities. See [ROADMAP.md](ROADMAP.md) for the full plan.
+
+V3 is complete. V2 is complete.
+
+**V4 Phase 1 (in progress):** Package rename `crypto_swing_copilot` → `tenth_floor` is complete. Next: universe restructuring, YFinanceDataFetcher, MacroAgent, gate generalization.

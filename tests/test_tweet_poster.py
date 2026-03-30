@@ -8,13 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from crypto_swing_copilot.social.discord_draft import send_draft_to_discord
-from crypto_swing_copilot.social.tweet_drafter import (
+from tenth_floor.social.discord_draft import send_draft_to_discord
+from tenth_floor.social.tweet_drafter import (
     TweetDraftFile,
     TweetDraftResponse,
     TweetOption,
 )
-from crypto_swing_copilot.social.tweet_poster import TweetPoster
+from tenth_floor.social.tweet_poster import TweetPoster
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -56,7 +56,7 @@ def _make_draft(report_date: str = "2026-03-28", posted: bool = False) -> dict:
 
 class TestTweetPoster:
     def test_load_draft_not_found(self, db_path: Path, drafts_dir: Path) -> None:
-        with patch("crypto_swing_copilot.social.tweet_poster.DATA_DIR", drafts_dir.parent):
+        with patch("tenth_floor.social.tweet_poster.DATA_DIR", drafts_dir.parent):
             poster = TweetPoster(db_path=db_path)
             result = poster._load_draft("2099-01-01")
             poster.close()
@@ -66,7 +66,7 @@ class TestTweetPoster:
         draft_data = _make_draft()
         (drafts_dir / "2026-03-28.json").write_text(json.dumps(draft_data))
 
-        with patch("crypto_swing_copilot.social.tweet_poster.DATA_DIR", drafts_dir.parent):
+        with patch("tenth_floor.social.tweet_poster.DATA_DIR", drafts_dir.parent):
             poster = TweetPoster(db_path=db_path)
             result = poster._load_draft("2026-03-28")
             poster.close()
@@ -76,7 +76,7 @@ class TestTweetPoster:
         assert result.report_date == "2026-03-28"
 
     def test_post_interactive_no_draft(self, db_path: Path, drafts_dir: Path, capsys) -> None:
-        with patch("crypto_swing_copilot.social.tweet_poster.DATA_DIR", drafts_dir.parent):
+        with patch("tenth_floor.social.tweet_poster.DATA_DIR", drafts_dir.parent):
             poster = TweetPoster(db_path=db_path)
             result = poster.post_interactive("2099-01-01")
             poster.close()
@@ -89,7 +89,7 @@ class TestTweetPoster:
         draft_data = _make_draft(posted=True)
         (drafts_dir / "2026-03-28.json").write_text(json.dumps(draft_data))
 
-        with patch("crypto_swing_copilot.social.tweet_poster.DATA_DIR", drafts_dir.parent):
+        with patch("tenth_floor.social.tweet_poster.DATA_DIR", drafts_dir.parent):
             poster = TweetPoster(db_path=db_path)
             result = poster.post_interactive("2026-03-28")
             poster.close()
@@ -102,7 +102,7 @@ class TestTweetPoster:
         draft_data = _make_draft()
         (drafts_dir / "2026-03-28.json").write_text(json.dumps(draft_data))
 
-        with patch("crypto_swing_copilot.social.tweet_poster.DATA_DIR", drafts_dir.parent):
+        with patch("tenth_floor.social.tweet_poster.DATA_DIR", drafts_dir.parent):
             with patch("builtins.input", return_value="n"):
                 poster = TweetPoster(db_path=db_path)
                 result = poster.post_interactive("2026-03-28")
@@ -213,7 +213,7 @@ class TestDiscordDraft:
         mock_resp.status_code = 204
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("crypto_swing_copilot.social.discord_draft.requests.post", return_value=mock_resp) as mock_post:
+        with patch("tenth_floor.social.discord_draft.requests.post", return_value=mock_resp) as mock_post:
             result = send_draft_to_discord(_make_draft_obj(), webhook_url="https://example.com/hook")
 
         assert result is True
@@ -226,7 +226,7 @@ class TestDiscordDraft:
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("crypto_swing_copilot.social.discord_draft.requests.post", return_value=mock_resp) as mock_post:
+        with patch("tenth_floor.social.discord_draft.requests.post", return_value=mock_resp) as mock_post:
             send_draft_to_discord(_make_draft_obj(with_thread=True), webhook_url="https://example.com/hook")
 
         payload = mock_post.call_args[1]["json"]
@@ -241,7 +241,7 @@ class TestDiscordDraft:
             response=MagicMock(status_code=400, text="Bad request"),
         )
 
-        with patch("crypto_swing_copilot.social.discord_draft.requests.post", return_value=mock_resp):
+        with patch("tenth_floor.social.discord_draft.requests.post", return_value=mock_resp):
             result = send_draft_to_discord(_make_draft_obj(), webhook_url="https://example.com/hook")
 
         assert result is False
@@ -251,7 +251,7 @@ class TestDiscordDraft:
         mock_resp.raise_for_status = MagicMock()
 
         with patch.dict("os.environ", {"DISCORD_TWEET_WEBHOOK_URL": "https://env.com/hook"}):
-            with patch("crypto_swing_copilot.social.discord_draft.requests.post", return_value=mock_resp) as mock_post:
+            with patch("tenth_floor.social.discord_draft.requests.post", return_value=mock_resp) as mock_post:
                 result = send_draft_to_discord(_make_draft_obj())
 
         assert result is True

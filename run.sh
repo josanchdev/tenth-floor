@@ -136,7 +136,7 @@ done
 # ─── Dashboard mode (no vLLM needed) ─────────────────────────────────────
 if [[ "$DASHBOARD" == true ]]; then
     log "Starting Streamlit dashboard..."
-    exec "$PYTHON_BIN" -m streamlit run "${SCRIPT_DIR}/src/crypto_swing_copilot/dashboard/app.py"
+    exec "$PYTHON_BIN" -m streamlit run "${SCRIPT_DIR}/src/tenth_floor/dashboard/app.py"
 fi
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -176,7 +176,7 @@ done
 # 2. Run daily pipeline (unless --outcomes-only)
 if [[ "$OUTCOMES_ONLY" == false ]]; then
     log "Running daily pipeline..."
-    if "$PYTHON_BIN" -m crypto_swing_copilot.main "${PASSTHROUGH_ARGS[@]}" 2>&1 | tee -a "$PIPELINE_LOG"; then
+    if "$PYTHON_BIN" -m tenth_floor.main "${PASSTHROUGH_ARGS[@]}" 2>&1 | tee -a "$PIPELINE_LOG"; then
         log "Pipeline complete — log: ${PIPELINE_LOG}"
     else
         log "WARNING: Pipeline exited with errors — check ${PIPELINE_LOG}"
@@ -186,7 +186,7 @@ fi
 # 3. Generate tweet draft (skip on --dry-run)
 if [[ "$DRY_RUN" == false && "$OUTCOMES_ONLY" == false ]]; then
     log "Generating tweet draft..."
-    if "$PYTHON_BIN" -m crypto_swing_copilot.post_tweet --draft-only 2>&1 | tee -a "$PIPELINE_LOG"; then
+    if "$PYTHON_BIN" -m tenth_floor.post_tweet --draft-only 2>&1 | tee -a "$PIPELINE_LOG"; then
         log "Tweet draft generated"
     else
         log "WARNING: Tweet draft generation failed"
@@ -197,7 +197,7 @@ fi
 
 if [[ "$DRY_RUN" == false ]]; then
     log "Running outcome checker..."
-    if "$PYTHON_BIN" -m crypto_swing_copilot.check_outcomes 2>&1 | tee -a "$OUTCOMES_LOG"; then
+    if "$PYTHON_BIN" -m tenth_floor.check_outcomes 2>&1 | tee -a "$OUTCOMES_LOG"; then
         log "Outcome checker complete — log: ${OUTCOMES_LOG}"
     else
         log "WARNING: Outcome checker exited with errors — check ${OUTCOMES_LOG}"

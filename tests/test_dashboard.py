@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from crypto_swing_copilot.dashboard.queries import (
+from tenth_floor.dashboard.queries import (
     CLOSED_STATUSES,
     compute_tier_stats,
     load_signals,
