@@ -20,7 +20,7 @@ pytest -k "dedup" -v                               # by pattern
 # Lint & type check
 ruff check src/ tests/                 # lint (E, F, I, UP, B rules; line-length 100)
 ruff check --fix src/                  # auto-fix
-mypy src/tenth_floor/                  # type check (Python 3.11 target)
+mypy src/tenth_floor/                  # type check (Python 3.12 target)
 
 # Run pipeline
 python -m tenth_floor.main                    # full universe
@@ -104,7 +104,7 @@ All agents use `agents/base.py`:
 - `clean_json_response()` — strips Qwen3 `<think>` blocks and markdown fences
 - LLM tracing via `langfuse.openai.OpenAI` wrapper (auto-instruments every call)
 
-RiskAgent verdict logic is **pure Python** (no LLM for accept/reject decisions). The LLM only enriches the reasoning text for approved signals.
+Phase 1.5 replaces the V3 agents (QuantAgent, StrategyAgent, SentimentAgent, RiskAgent) with MacroAnalyst, TradeAnalyst, and RiskReviewer. The LLM makes all trading decisions; Python validates output for sanity.
 
 ### Config
 
@@ -112,7 +112,7 @@ All config in `config/`. No secrets — those go in `.env` (see `.env.example`).
 
 | File | Purpose |
 |------|---------|
-| `universe.json` | 26 Binance spot USDT pairs + sector mapping |
+| `universe.json` | 36 assets across 4 classes + sector mapping |
 | `risk_profile.json` | Conviction tiers, SL/TP params, confidence threshold, max signals |
 | `models.yaml` | LLM provider routing + per-agent temp/token settings |
 | `services.yaml` | External service URLs and cache settings |

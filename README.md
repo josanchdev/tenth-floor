@@ -4,8 +4,8 @@
 > across crypto, US equities, ETFs, and commodities for a paid Discord
 > community.
 
-Subscribers receive daily signal embeds with full mathematical and
-agentic reasoning. They execute trades manually on their own accounts.
+Subscribers receive daily signal embeds with full reasoning from an
+AI-first pipeline. They execute trades manually on their own accounts.
 The system never touches money, never places orders, never manages a
 budget.
 
@@ -13,24 +13,38 @@ budget.
 
 ## How It Works
 
-The pipeline fetches daily OHLCV data, computes technical indicators
-deterministically in Python, then routes enriched snapshots through 7
-sequential filtering gates and a four-agent LLM pipeline. Approved
-signals (max 2-3/day) are published to Discord and logged to SQLite.
-Signal resolutions (TP hit, SL hit, expired) are also posted for full
-transparency.
+The pipeline fetches daily OHLCV data and computes technical indicators
+in Python as context for LLM reasoning. Three specialised AI agents —
+MacroAnalyst, TradeAnalyst, and RiskReviewer — make all trading
+decisions: macro regime assessment, individual trade analysis with
+entry/SL/TP, and portfolio-level risk review. Python validates the
+output for sanity. Approved signals (max 3/day) are published to
+Discord and logged to SQLite. Signal resolutions (TP hit, SL hit,
+expired) are also posted for full transparency.
+
+### Pipeline Flow (Phase 1.5: AI-First)
 
 ```
-Data sources     ──┐
-(ccxt, yfinance)   ├──▶  Feature Engine  ──▶  Quant + Sentiment + Strategy + Risk  ──▶  Discord + SQLite
-Sentiment feeds  ──┘       (Python)                 (Qwen3 32B via vLLM)
+Data (ccxt/yfinance) ──→ TACalculator ──→ Indicators + Structural Levels
+                                                   ↓
+MacroAnalyst (1 LLM call) ──→ macro frame (regime, per-class impact)
+                                                   ↓
+Pre-screen (data-quality only, very permissive) ──→ ~30-36 candidates
+                                                   ↓
+TradeAnalyst (1 LLM call per candidate) ──→ BUY proposals with entry/SL/TP/reasoning
+                                                   ↓
+Python validation (sanity checks) ──→ valid proposals
+                                                   ↓
+RiskReviewer (1 LLM call, ALL proposals) ──→ approved signals with conviction
+                                                   ↓
+Signal cap (business rule) ──→ featured signals ──→ SignalLogger + Discord
 ```
 
 **Hard constraints:** spot only · no leverage · no futures · no
-auto-execution · LONG setups only
+auto-execution · LONG setups only · R:R >= 1.5
 
 See [docs/architecture.md](docs/architecture.md) for the full system
-diagram with Mermaid flowchart.
+diagram.
 
 ---
 
@@ -38,20 +52,21 @@ diagram with Mermaid flowchart.
 
 ### V4 (active — approved 2026-03-30)
 
-Multi-asset universe expansion. The core problem: 26 crypto pairs are
-one correlated market — when BTC enters a downtrend, all pairs fail the
-gates simultaneously. V4 expands to ~36 structurally uncorrelated assets
-so the pipeline produces signals in any market regime.
+Multi-asset universe + AI-first signal generation. The core problem:
+26 crypto pairs are one correlated market — when BTC enters a downtrend,
+all pairs fail simultaneously. V4 expands to ~36 structurally
+uncorrelated assets and shifts decision-making to the LLM so the
+pipeline produces signals in any market regime.
 
 See [ROADMAP.md](ROADMAP.md) for the full V4 plan.
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| Phase 1 — Foundation | Package rename, universe restructure, YFinanceDataFetcher | In progress |
-| Phase 2 — Sentiment & Macro | MacroAgent, VIX/DXY/yields, RSS expansion | Planned |
-| Phase 3 — Gate generalization | Market-leader gates, two-pass scheduling, conditional entries | Planned |
-| Phase 4 — Validation | 90-day backtest, equity validation mode, MacroAgent review | Planned |
-| Phase 5 — Launch | Multi-asset Discord channels, tweet drafter, dashboard updates | Planned |
+| Phase 1 — Foundation | Universe restructure, YFinanceDataFetcher, class-leader gates | Complete |
+| Phase 1.5 — AI-First | MacroAnalyst, TradeAnalyst, RiskReviewer, delete mechanical gates | Next |
+| Phase 2 — Macro Enrichment | RSS feeds, 10Y yield, earnings calendar, VIX/DXY deep integration | Planned |
+| Phase 3 — Validation | 90-day backtest, equity validation mode, signal quality metrics | Planned |
+| Phase 4 — Launch | Multi-asset Discord channels, tweet drafter, dashboard updates | Planned |
 
 ### V3 (complete — 2026-03-27)
 
@@ -123,8 +138,8 @@ cp .env.example .env
 # Full universe
 python -m tenth_floor.main
 
-# Specific pairs
-python -m tenth_floor.main BTCUSDT ETHUSDT
+# Specific symbols
+python -m tenth_floor.main BTCUSDT AAPL SPY
 
 # Dry run (no DB writes, no Discord posts)
 python -m tenth_floor.main --dry-run
@@ -148,15 +163,15 @@ cron, outcome checking, and monitoring.
 Each approved signal carries:
 
 - **Symbol** and timeframe (1d)
-- **Entry zone** at/near current market price
-- **Stop-loss** below swing low with ATR buffer
-- **Take-profit** at nearest resistance (R:R >= 2.0 enforced)
-- **Reward:Risk ratio** (minimum 2.0)
+- **Entry zone** — LLM-selected based on structural analysis
+- **Stop-loss** — LLM-selected, validated by Python (sanity bounds)
+- **Take-profit** — LLM-selected, validated by Python (R:R >= 1.5)
+- **Reward:Risk ratio** (minimum 1.5 — business integrity floor)
 - **Conviction tier** (`high` = 2% suggested risk, `standard` = 1%)
-- **Strategy rationale** (LLM-generated, full reasoning)
+- **Trade rationale** (LLM-generated, full reasoning including macro context)
 - **Outcome notifications** — TP hit, SL hit, and expiry updates posted to Discord
 
-Max 2 signals per day (production). Silence is the default — only the
+Max 3 signals per day (production). Silence is the default — only the
 strongest setups are published. See [docs/signals.md](docs/signals.md)
 for the full specification.
 
@@ -164,12 +179,14 @@ for the full specification.
 
 ## Design Principles
 
-1. **Python owns all math.** `pandas-ta` computes RSI, ATR, EMA,
-   Bollinger Bands. LLMs never do arithmetic.
-2. **LLMs reason and rank.** Agents interpret pre-computed snapshots;
-   they don't crunch numbers.
+1. **AI-first, Python validates.** LLM agents make all trading
+   decisions — BUY/SKIP, entry, SL, TP. Python computes indicators as
+   context, validates LLM output for sanity, and enforces business rules.
+2. **Python owns the data.** `pandas-ta` computes every indicator.
+   Structural levels, ATR, and volume metrics are pre-computed so the
+   LLM can reason with them instead of doing arithmetic.
 3. **Spot only, LONG only.** No leverage, no futures, no short
-   proposals. Hardcoded rejection at StrategyAgent and RiskAgent.
+   proposals. Enforced by Python validation after LLM output.
 4. **Glass box.** Every signal includes full reasoning. Every LLM call
    is traced in Langfuse.
 5. **Graceful degradation.** Sentiment sources failing never crashes
@@ -186,8 +203,8 @@ for the full specification.
 ```
 the-tenth-floor/
 ├── config/
-│   ├── universe.json          # Asset universe + sector mapping
-│   ├── risk_profile.json      # Conviction tiers, SL/TP parameters
+│   ├── universe.json          # 36-asset universe + sector mapping
+│   ├── risk_profile.json      # Conviction tiers, R:R floor, max signals
 │   ├── models.yaml            # LLM provider + per-agent config
 │   ├── services.yaml          # External service configuration
 │   └── profiles/              # validation.json / production.json overlays
@@ -200,11 +217,13 @@ the-tenth-floor/
 ├── src/tenth_floor/
 │   ├── main.py                # Daily pipeline orchestrator
 │   ├── config.py              # Central path resolver
+│   ├── universe.py            # Universe loader + asset queries
 │   ├── backtest.py            # Historical replay / backtester
 │   ├── check_outcomes.py      # Standalone TP/SL resolution
 │   ├── post_tweet.py          # X/Twitter auto-poster
 │   ├── data/
-│   │   ├── market_data.py     # OHLCV via ccxt + Parquet cache
+│   │   ├── market_data.py     # Crypto OHLCV via ccxt + Parquet cache
+│   │   ├── yfinance_data.py   # Equity/ETF OHLCV via yfinance + Parquet cache
 │   │   ├── sentiment.py       # Fear & Greed Index + RSS headlines
 │   │   └── models.py          # Pydantic v2 contracts for every layer
 │   ├── features/
@@ -212,10 +231,10 @@ the-tenth-floor/
 │   │   └── pair_snapshot.py   # PairSnapshot assembly
 │   ├── agents/
 │   │   ├── base.py            # Provider-agnostic LLM call + config
-│   │   ├── quant_agent.py     # Trend regime + confidence score
-│   │   ├── sentiment_agent.py # Macro sentiment bias
-│   │   ├── strategy_agent.py  # LONG setup proposal
-│   │   └── risk_agent.py      # Conviction tier + final gating
+│   │   ├── quant_agent.py     # Trend regime + confidence (V3, being replaced)
+│   │   ├── sentiment_agent.py # Macro sentiment bias (V3, being replaced)
+│   │   ├── strategy_agent.py  # LONG setup proposal (V3, being replaced)
+│   │   └── risk_agent.py      # Conviction tier + gating (V3, being replaced)
 │   ├── db/
 │   │   └── signal_logger.py   # SQLite signal persistence
 │   ├── notifications/

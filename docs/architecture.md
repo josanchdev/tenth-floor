@@ -1,27 +1,106 @@
 # System Architecture
 
-> **Note:** This document describes the current V3 architecture (crypto-only,
-> 26 pairs). V4 is expanding to multi-asset (~36 assets across crypto,
-> equities, ETFs, and commodities). See [ROADMAP.md](../ROADMAP.md) for the
-> V4 plan. This document will be updated as V4 modules land.
+## Architecture Overview
 
-## Pipeline Overview
+The Tenth Floor AI is transitioning from V3 (mechanical gates, Python-computed
+price levels) to an AI-first architecture (Phase 1.5) where LLM agents make all
+trading decisions and Python validates. This document describes both the current
+state and the target architecture. See [ROADMAP.md](../ROADMAP.md) Phase 1.5 for
+the full implementation plan.
 
-The Tenth Floor AI runs a six-step daily pipeline orchestrated by
-`main.py`. Data flows from external sources through a pure-Python
-feature engine, into a four-agent LLM pipeline, and out to SQLite +
-Discord. A separate outcome checker resolves signals post-publication.
+---
+
+## Target Architecture (Phase 1.5: AI-First)
+
+The AI-first pipeline replaces 4 specialised agents + 8 mechanical gates with
+3 reasoning agents + a Python validation layer.
+
+**Core principle:** The LLM is the trader. Python is the risk manager.
+
+```
+Data (ccxt/yfinance) ──→ TACalculator ──→ Indicators + Structural Levels
+                                                   ↓
+MacroAnalyst (1 LLM call) ──→ macro frame (regime, per-class impact)
+                                                   ↓
+Pre-screen (data-quality only) ──→ ~30-36 candidates
+                                                   ↓
+TradeAnalyst (1 LLM call per candidate) ──→ BUY proposals with entry/SL/TP/reasoning
+                                                   ↓
+Python validation (sanity checks) ──→ valid proposals
+                                                   ↓
+RiskReviewer (1 LLM call, ALL proposals) ──→ approved signals with conviction
+                                                   ↓
+Signal cap (business rule) ──→ featured signals ──→ SignalLogger + Discord
+```
+
+### Agents
+
+| Agent | Calls | Role |
+|-------|-------|------|
+| **MacroAnalyst** | 1 per run | Reads VIX, F&G, DXY. Outputs macro regime + per-asset-class impact. Runs first — its output frames every TradeAnalyst call. |
+| **TradeAnalyst** | 1 per candidate | Receives full TA context + macro frame. Decides BUY or SKIP. If BUY: picks entry zone, SL, TP with structural reasoning. Replaces QuantAgent + StrategyAgent. |
+| **RiskReviewer** | 1 per run | Sees ALL proposals + macro context + existing open signals. Reviews as a portfolio: correlation, sector concentration, conviction tiers. Replaces RiskAgent + mechanical gates. |
+
+### Python Validation Layer
+
+Runs after all agents. Not a judgment call — a safety net for LLM errors.
+
+| Check | Rule | Why |
+|-------|------|-----|
+| Direction | No SHORT | Spot only, LONG only |
+| Price sanity | SL < entry < TP | Basic math |
+| Stop distance | SL not > 15% below entry | Prevents absurd stops |
+| Target distance | TP not > 50% above entry | Prevents fantasy targets |
+| R:R verification | Recalculate from LLM's numbers, must be >= 1.5 | Business integrity |
+| Duplicate check | No open signal for same asset | Prevents double exposure |
+| Signal cap | Max 3 featured per day | Business rule |
+
+### Pre-screen
+
+Extremely permissive — saves GPU time, not a quality filter.
+
+Skip only when:
+- Fewer than 50 candles of data
+- Zero volume for 5+ consecutive days
+
+Everything else goes to TradeAnalyst. The LLM decides quality, not Python.
+
+### What was deleted from V3
+
+| V3 Component | Replacement | Why |
+|-------------|-------------|-----|
+| QuantAgent | Merged into TradeAnalyst | Trend classification is part of trade analysis |
+| StrategyAgent | Merged into TradeAnalyst | One coherent analysis > two fragmented calls |
+| SentimentAgent | Replaced by MacroAnalyst | Broader macro context, not just crypto sentiment |
+| RiskAgent | Replaced by RiskReviewer | Portfolio-level reasoning, not per-signal rules |
+| Gate 1 (trend regime) | TradeAnalyst handles | LLM won't BUY a strong downtrend |
+| Gate 3 (volume) | TradeAnalyst sees volume | LLM reasons about it |
+| Gate 4 (relative strength) | RiskReviewer handles | Cross-asset comparison |
+| Gate 5 (confidence threshold) | TradeAnalyst confidence is real | Not gated by Python |
+| Gate 6 (R:R minimum) | Python validation | Verifies math, doesn't set threshold |
+| Gate 7 (correlation guard) | RiskReviewer handles | LLM reasons about correlation |
+| Gate 8 (sector cap) | RiskReviewer handles | LLM reasons about diversification |
+| `_compute_price_levels()` | TradeAnalyst picks levels | LLM uses structural analysis |
+
+---
+
+## Current Architecture (V3/Phase 1 — being replaced)
+
+> **Note:** This section describes the architecture currently running in
+> production. Phase 1.5 will replace the agent layer and gates described below.
 
 ```mermaid
 flowchart TD
     subgraph Sources["External Data Sources"]
         BIN["Binance Spot API\nccxt · read-only · public"]
+        YF["Yahoo Finance\nyfinance · equities/ETFs/commodities"]
         FGI["Fear & Greed Index\nalternative.me/fng"]
         RSS["RSS Headlines\nCoinDesk"]
     end
 
     subgraph Fetch["Step 1–2 · Data Fetch"]
         MDF["MarketDataFetcher\ndata/market_data.py\n500-bar OHLCV · Parquet cache"]
+        YDF["YFinanceDataFetcher\ndata/yfinance_data.py\n730-day OHLCV · Parquet cache"]
         SF["SentimentFetcher\ndata/sentiment.py\n7-day F&G trend + headlines"]
     end
 
@@ -30,154 +109,61 @@ flowchart TD
         SB["SnapshotBuilder\nfeatures/pair_snapshot.py\nassembles PairSnapshot"]
     end
 
-    subgraph Contracts["Typed Data Contracts  ·  data/models.py"]
-        SS["SentimentSnapshot\nfear_greed + headlines"]
-        PS["PairSnapshot\nsymbol · timeframe · price\nindicators · sentiment · recent closes"]
+    subgraph Agents["Step 4–5 · Agent Layer  ·  Qwen3 32B AWQ via vLLM"]
+        SA["SentimentAgent\nMacro bias\n(runs once, shared)"]
+        QA["QuantAgent\nTrend regime · confidence\n(per symbol)"]
+        STA["StrategyAgent\nLONG setup proposal\nentry / SL / TP\n(per symbol)"]
+        RA["RiskAgent\nConviction tiers · gating\n(batch, all proposals)"]
     end
 
-    subgraph Agents["Step 4–5 · Agent Layer  ·  Qwen3 32B AWQ via vLLM  ·  Langfuse traced"]
-        SA["SentimentAgent\nMacro bias classification\nrisk narrative\n(runs once, shared)"]
-        QA["QuantAgent\nTrend regime · signal labels\nconfidence score 0–1\n(per pair × timeframe)"]
-        STA["StrategyAgent\nContrarian swing philosophy\nLONG setup proposal\nentry / SL / TP computed by Python\n(per pair × timeframe)"]
-        RA["RiskAgent\nSHORT rejection · R:R gate\nconfidence gate · conviction tiers\n(batch, all proposals)"]
-    end
-
-    subgraph Output["Step 5b–6 · Cap + Output Layer"]
-        DD["Signal Cap\nmain.py\nTop N by confidence"]
-        PE["PlaybookEntry[]\nApproved signals"]
-        DB["SignalLogger\ndb/signal_logger.py\ndata/playbook_history.db\nUNIQUE(pair, tf, date)"]
-        DN["DiscordNotifier\nnotifications/discord_notifier.py\nOne consolidated embed per run\n{PAIR} {TF} · LONG · {TIER}"]
-    end
-
-    subgraph Lifecycle["Post-Pipeline · Signal Lifecycle"]
-        CO["Outcome Checker\ncheck_outcomes.py\n4h candle walk · MAE/MFE\nPENDING → OPEN → TP/SL/EXPIRED"]
-    end
-
-    subgraph Admin["Admin Dashboard"]
-        AD["Streamlit Dashboard\ndashboard/app.py\nKPIs · signal history · tier stats\nMAE/MFE analysis"]
+    subgraph Output["Step 6 · Output Layer"]
+        DD["Signal Cap + Gates\nmain.py"]
+        DB["SignalLogger\nSQLite"]
+        DN["DiscordNotifier\nWebhook"]
     end
 
     BIN --> MDF
+    YF --> YDF
     FGI --> SF
     RSS --> SF
 
     MDF --> TAC
+    YDF --> TAC
     TAC --> SB
-    SF --> SS
-    SS --> SB
-    SS --> SA
+    SF --> SB
+    SF --> SA
 
-    SB --> PS
-    PS --> QA
-    PS --> STA
+    SB --> QA
+    SB --> STA
 
-    SA -- "SentimentSignal\n(bias · narrative)" --> STA
-    QA -- "QuantSignal\n(regime · confidence)" --> STA
-
-    STA -- "SetupProposal[]" --> RA
-    QA -- "confidence float" --> RA
-
+    SA --> STA
+    QA --> STA
+    STA --> RA
     RA --> DD
-    DD --> PE
-
-    PE --> DB
-    PE --> DN
-
-    BIN -- "4h candles" --> CO
-    DB <--> CO
-    DB --> AD
+    DD --> DB
+    DD --> DN
 ```
 
----
+### V3 Pipeline Steps
 
-## Pipeline Steps
+1. **Fetch Market Data** — `MarketDataFetcher` (crypto via ccxt) and
+   `YFinanceDataFetcher` (equities/ETFs/commodities via yfinance). Both
+   use incremental Parquet caching under `data/raw/{SYMBOL}/`.
 
-### Step 1 — Fetch Market Data
+2. **Fetch Sentiment** — `SentimentFetcher` retrieves F&G Index + RSS
+   headlines. Runs once, produces `SentimentSnapshot`.
 
-`MarketDataFetcher` fetches 500-bar OHLCV history from Binance for each
-pair in `config/universe.json` on the 1d timeframe.
-Responses are cached as Parquet files under `data/raw/{SYMBOL}/`.
-Subsequent runs do incremental fetches — only new bars since the last
-cached timestamp are requested.
+3. **Build Snapshots** — `TACalculator` computes 13 indicators.
+   `SnapshotBuilder` assembles typed `PairSnapshot` per symbol.
 
-### Step 2 — Fetch Sentiment
+4. **Agent Pipeline** — QuantAgent (trend regime), SentimentAgent (macro
+   bias), StrategyAgent (LONG proposal with Python-computed levels),
+   RiskAgent (conviction tiers + gating).
 
-`SentimentFetcher` retrieves the Fear & Greed Index (7-day history) and
-CoinDesk RSS headlines. This runs once per daily pipeline and produces
-an immutable `SentimentSnapshot` shared across all pairs. Both sources
-degrade gracefully — API failures return safe defaults (F&G = 50, no
-headlines).
+5. **Gates** — 8 sequential mechanical filters (trend, volume, RS,
+   confidence, R:R, sector cap, correlation guard, signal cap).
 
-### Step 3 — Build Snapshots
-
-`TACalculator` computes 13 technical indicators from the OHLCV
-DataFrame. `SnapshotBuilder` assembles a typed `PairSnapshot` for each
-pair × timeframe, attaching indicators, the latest price, 20 recent
-closes/volumes, and the shared `SentimentSnapshot`.
-
-### Step 4 — Agent Pipeline (per snapshot)
-
-Each `PairSnapshot` flows through:
-
-1. **QuantAgent** — classifies trend regime (5 levels), identifies
-   signal labels from 13 predefined patterns, scores confidence 0–1
-   from indicator consensus.
-2. **SentimentAgent** — runs once (not per snapshot). Classifies macro
-   bias on a 5-level scale from extreme fear to extreme greed, writes
-   a risk narrative for LONG traders.
-3. **StrategyAgent** — receives `PairSnapshot` + `QuantSignal` +
-   `SentimentSignal`. Python computes entry zone, SL, TP before the
-   LLM call. The LLM decides LONG or SKIP and writes the rationale.
-   SHORT proposals are hardcoded to SKIP at runtime.
-
-### Step 5 — Risk Gating
-
-`RiskAgent` receives all `SetupProposal` objects with their confidence
-scores. It applies deterministic Python rules:
-
-- Reject SHORT direction
-- Reject SKIP / HOLD action
-- Reject R:R below configured minimum (2.0)
-- Reject confidence < configured minimum (0.57 validation, 0.65 production)
-- Assign conviction tier: `high` (>= 0.80, 2% risk) or `standard`
-  (>= 0.57, 1% risk)
-
-A thin LLM layer generates brief verdict reasoning for each entry.
-
-### Step 5b — Signal Capping
-
-The pipeline enforces a daily signal cap (`max_daily_signals` from
-config). Approved signals are sorted by confidence and only the top N
-are published. This prevents overloading subscribers with too many
-setups.
-
-### Step 6 — Persist and Notify
-
-Approved signals are inserted into SQLite via `SignalLogger` (used as
-a context manager) and posted to Discord via `DiscordNotifier` as a
-single consolidated embed. The embed field name includes the timeframe:
-`SOLUSDT 1D · LONG · STANDARD`. Zero-signal days always post a "No
-actionable setups today" message — the channel never goes silent.
-
-The `UNIQUE(pair, timeframe, report_date)` constraint in the schema
-prevents duplicate signals if the pipeline runs twice on the same day.
-`INSERT OR IGNORE` silently skips duplicates.
-
-Each signal's `langfuse_trace_id` is recorded in the DB, linking it
-back to the Langfuse trace for the pipeline run that produced it.
-
-### Post-Pipeline — Outcome Checking
-
-`check_outcomes.py` is a standalone script (run manually or via cron).
-It walks 4h candles chronologically for each PENDING/OPEN signal:
-
-- **PENDING → OPEN**: candle low <= entry_high (price entered zone)
-- **OPEN → HIT_TP**: candle high >= take_profit
-- **OPEN → HIT_SL**: candle low <= stop_loss (SL-first on ambiguity)
-- **PENDING/OPEN → EXPIRED**: 14 calendar days with no resolution
-
-MAE (max adverse excursion) and MFE (max favourable excursion) are
-tracked per signal during the walk.
+6. **Persist and Notify** — SQLite via `SignalLogger`, Discord webhook.
 
 ---
 
@@ -187,47 +173,36 @@ tracked per signal during the walk.
 
 | File | Responsibility |
 |---|---|
-| `main.py` | Daily pipeline orchestrator. CLI entry point. Wires Steps 1–6. Per-pair dedup. Langfuse `@observe` traced. |
-| `config.py` | Central path resolver. Locates project root via `pyproject.toml`. Exports `PROJECT_ROOT`, `CONFIG_DIR`, `DATA_DIR`. |
-| `data/models.py` | All Pydantic v2 contracts. Single source of truth for every inter-module boundary. Frozen models — no mutation after construction. |
-| `data/market_data.py` | Binance OHLCV via ccxt (public, no API key). Incremental Parquet cache. Symbol normalisation via `_normalise_symbol()`. |
-| `data/sentiment.py` | Fear & Greed Index + RSS headlines via feedparser. Returns `SentimentSnapshot`. Graceful degradation on failure. |
-| `features/ta_calculator.py` | Computes EMA-20/50/200, RSI-14, MACD, Bollinger Bands, ATR-14, OBV, Volume-SMA-20 via pandas-ta. Returns `TAIndicators`. |
-| `features/pair_snapshot.py` | Assembles `PairSnapshot` from OHLCV + TA + sentiment. Bridge between data/feature layer and agents. |
-| `agents/base.py` | `call_llm()` (provider-agnostic, Langfuse-traced), `parse_json_response()`, `clean_json_response()`, config loaders. |
-| `agents/quant_agent.py` | Trend regime classification + confidence scoring from indicator consensus. |
-| `agents/sentiment_agent.py` | Macro sentiment bias + risk narrative from `SentimentSnapshot`. |
-| `agents/strategy_agent.py` | LONG setup proposals. Contrarian swing philosophy. Price levels computed symmetrically from entry midpoint by Python; LLM decides entry or skip. |
-| `agents/risk_agent.py` | Final gatekeeper. Deterministic rejection rules (SHORT, R:R, confidence) + conviction tier assignment + LLM verdict reasoning. |
-| `db/signal_logger.py` | SQLite persistence with context manager. `log()` (INSERT OR IGNORE), `open_signal_count()`, `get_active_signals()`, `update_signal()` with column whitelist. |
-| `dashboard/app.py` | Streamlit admin dashboard. KPIs, signal history table (filterable), performance by conviction tier, outcome distribution, MAE/MFE analysis. |
-| `dashboard/queries.py` | Pure SQL + pandas queries for the dashboard. No Streamlit dependency — testable independently. |
-| `notifications/discord_notifier.py` | Discord webhook poster. One consolidated embed per run. DB-unaware — receives `open_count` from caller. |
-| `check_outcomes.py` | Standalone candle-walk script. PENDING→OPEN→HIT_TP/HIT_SL/EXPIRED. MAE/MFE tracking. 14-day expiry. |
+| `main.py` | Daily pipeline orchestrator. CLI entry point. Langfuse traced. |
+| `config.py` | Central path resolver. Locates project root via `pyproject.toml`. |
+| `universe.py` | Loads `universe.json`. Asset queries: `symbols()`, `asset_class_for()`, `data_source_for()`, `class_leader_for()`, `sector_map()`. |
+| `data/models.py` | Pydantic v2 contracts. Frozen models for every inter-module boundary. |
+| `data/market_data.py` | Crypto OHLCV via ccxt. Incremental Parquet cache. |
+| `data/yfinance_data.py` | Equity/ETF/commodity OHLCV via yfinance. Incremental Parquet cache. |
+| `data/sentiment.py` | F&G Index + RSS headlines. Graceful degradation on failure. |
+| `features/ta_calculator.py` | EMA-20/50/200, RSI-14, MACD, BB, ATR-14, OBV, Volume-SMA-20. |
+| `features/pair_snapshot.py` | Assembles `PairSnapshot` from OHLCV + TA + sentiment. |
+| `agents/base.py` | `call_llm()`, `parse_json_response()`, `clean_json_response()`, config loaders. |
+| `db/signal_logger.py` | SQLite persistence. `INSERT OR IGNORE` duplicate safety. |
+| `check_outcomes.py` | Signal resolution via candle walk. Routes to ccxt or yfinance per asset class. |
+| `dashboard/app.py` | Streamlit admin dashboard. |
 
 ### `config/`
 
 | File | Purpose |
 |---|---|
-| `universe.json` | 26 Binance USDT spot pairs + sector mapping |
-| `risk_profile.json` | Conviction tiers, SL ATR multiplier (1.2), TP R:R ratio (2.0), confidence threshold (0.57/0.65) |
-| `models.yaml` | LLM provider, base URL, model name, temperature + max tokens per agent |
-| `services.yaml` | ccxt settings, sentiment API URLs, Langfuse config, DB path |
+| `universe.json` | 36 assets across 4 asset classes + sector mapping |
+| `risk_profile.json` | Conviction tiers, R:R floor (1.5), confidence threshold, max signals |
+| `models.yaml` | LLM provider, base URL, model name, per-agent temperature + max tokens |
+| `services.yaml` | External service URLs, cache settings, DB path |
 | `profiles/` | validation.json / production.json config overlays |
-
-### `db/`
-
-| File | Purpose |
-|---|---|
-| `schema.sql` | SQLite DDL for the `signals` table with `UNIQUE(pair, timeframe, report_date)`. Applied at runtime via `CREATE TABLE IF NOT EXISTS`. Version-controlled; the `.db` file is git-ignored. |
 
 ---
 
 ## LLM Backend
 
-The LLM backend is provider-agnostic. `call_llm()` in `base.py` routes
-to any OpenAI-compatible API. The current default is **Qwen3 32B AWQ**
-served locally via **vLLM** on an RTX 3090.
+Provider-agnostic via `call_llm()` in `base.py`. Routes to any
+OpenAI-compatible API. Default: **Qwen3 32B AWQ** via **vLLM** locally.
 
 ```yaml
 # config/models.yaml
@@ -237,15 +212,6 @@ defaults:
   model: Qwen/Qwen3-32B-AWQ
 ```
 
-Per-agent overrides control temperature and token budget:
-
-| Agent | Temperature | Max tokens | Rationale |
-|---|---|---|---|
-| QuantAgent | 0.1 | 512 | Deterministic regime classification |
-| SentimentAgent | 0.3 | 512 | Slightly creative narrative |
-| StrategyAgent | 0.1 | 512 | Consistent structured JSON (~200 token output) |
-| RiskAgent | 0.0 | 512 | Strict rule application |
-
 The `LLM_BASE_URL` env var overrides `base_url` for deployment
 flexibility. `clean_json_response()` handles Qwen3-specific artifacts
 (`<think>` blocks) and markdown code fences before JSON parsing.
@@ -254,13 +220,12 @@ flexibility. `clean_json_response()` handles Qwen3-specific artifacts
 
 ## Key Design Rules
 
-### Python owns all arithmetic
+### AI-first, Python validates
 
-`pandas-ta` computes every indicator. Price levels in `StrategyAgent`
-are computed by `_compute_price_levels()` before the LLM is called.
-LLMs receive pre-computed numbers and must quote them verbatim — they
-never recompute. This is enforced at the prompt level in every agent's
-system prompt.
+LLM agents make all trading decisions. Python computes indicators as
+input context, validates LLM output for sanity (SL < entry < TP, R:R
+math, price bounds), and enforces hard business rules (signal cap,
+duplicate check, R:R floor).
 
 ### `PairSnapshot` is the boundary object
 
@@ -270,19 +235,16 @@ Everything downstream consumes it. No agent imports `market_data.py` or
 
 ### Symbol normalisation happens once
 
-`MarketDataFetcher._normalise_symbol()` converts any input format to
-`BTCUSDT` (no slash, uppercase). All downstream modules — agents, DB
-logger, Discord notifier — receive and store symbols in this format.
+Crypto: `BTCUSDT` (no slash, uppercase) via `MarketDataFetcher._normalise_symbol()`.
+Equities/ETFs: standard tickers (`AAPL`, `SPY`, `GLD`).
+LLM symbol output is overridden with the authoritative snapshot symbol.
 
 ### Immutable typed contracts
 
 All Pydantic models use `frozen=True`. No mutation after construction.
-This enables safe tracing, sharing across agents, and deterministic
-replay.
 
 ### Graceful degradation
 
 Every external dependency has a fallback path. Sentiment API down →
-neutral defaults. Pair fetch fails → log and skip that pair. Discord
-webhook unset → warn and continue. The pipeline never crashes on a
-single-pair or single-source failure.
+neutral defaults. Symbol fetch fails → log and skip. Discord webhook
+unset → warn and continue.
