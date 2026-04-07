@@ -1,4 +1,4 @@
-"""Unit tests for agent modules — mocked LLM calls, no real inference."""
+"""Unit tests for Phase 1.5 agents — mocked LLM calls, no real inference."""
 
 from __future__ import annotations
 
@@ -8,17 +8,16 @@ from unittest.mock import patch
 import pytest
 
 from tenth_floor.data.models import (
+    MacroRegime,
+    MacroSignal,
     PairSnapshot,
-    PlaybookVerdict,
-    QuantSignal,
-    SentimentBias,
-    SentimentSignal,
+    ReviewedSignal,
+    ReviewVerdict,
     SentimentSnapshot,
     SetupAction,
-    SetupProposal,
     SignalDirection,
     TAIndicators,
-    TrendRegime,
+    TradeProposal,
 )
 
 # ---------------------------------------------------------------------------
@@ -35,6 +34,8 @@ def sample_indicators() -> TAIndicators:
         bb_upper=63000.0, bb_middle=62000.0, bb_lower=61000.0,
         atr_14=500.0,
         obv=1000000.0, volume_sma_20=50000.0,
+        support_levels=[61200.0, 61700.0],
+        resistance_levels=[62800.0, 63500.0],
     )
 
 
@@ -43,6 +44,7 @@ def sample_snapshot(sample_indicators: TAIndicators) -> PairSnapshot:
     return PairSnapshot(
         symbol="BTCUSDT",
         timeframe="1d",
+        asset_class="crypto",
         current_price=62000.0,
         bar_timestamp=1710374400000,
         indicators=sample_indicators,
@@ -53,7 +55,7 @@ def sample_snapshot(sample_indicators: TAIndicators) -> PairSnapshot:
 
 
 @pytest.fixture
-def sample_sentiment_snapshot() -> SentimentSnapshot:
+def sample_sentiment() -> SentimentSnapshot:
     return SentimentSnapshot(
         fear_greed_value=65,
         fear_greed_label="Greed",
@@ -63,351 +65,389 @@ def sample_sentiment_snapshot() -> SentimentSnapshot:
 
 
 @pytest.fixture
-def sample_quant_signal() -> QuantSignal:
-    return QuantSignal(
-        symbol="BTCUSDT",
-        timeframe="1d",
-        trend_regime=TrendRegime.UPTREND,
-        signals=["EMA golden cross (20 > 50)", "Price above 200 EMA"],
-        confidence=0.78,
-        reasoning="Strong uptrend with EMA alignment.",
-    )
-
-
-@pytest.fixture
-def sample_sentiment_signal() -> SentimentSignal:
-    return SentimentSignal(
-        bias=SentimentBias.GREED,
-        risk_narrative="Market sentiment is moderately bullish.",
-        key_headlines=["BTC rallies past 62k"],
+def sample_macro() -> MacroSignal:
+    return MacroSignal(
+        regime=MacroRegime.RISK_ON,
+        regime_reasoning="Low VIX, moderate greed, stable dollar.",
+        asset_class_impacts=[
+            {"asset_class": "crypto", "outlook": "bullish", "reasoning": "Risk-on favours crypto"},
+            {"asset_class": "equity", "outlook": "bullish", "reasoning": "Low VIX supports equities"},
+            {"asset_class": "etf", "outlook": "neutral", "reasoning": "ETFs tracking broad market"},
+            {"asset_class": "commodity", "outlook": "neutral", "reasoning": "Dollar stable"},
+        ],
+        alerts=[],
+        vix_level=15.0,
         fear_greed_value=65,
+        dxy_trend="stable",
     )
 
 
 @pytest.fixture
-def sample_proposal() -> SetupProposal:
-    return SetupProposal(
+def sample_proposal() -> TradeProposal:
+    return TradeProposal(
         symbol="BTCUSDT",
         timeframe="1d",
-        direction=SignalDirection.LONG,
         action=SetupAction.BUY,
-        entry_zone_low=61690.0,
-        entry_zone_high=62310.0,
-        stop_loss=61090.0,
-        take_profit=63510.0,
-        reward_risk_ratio=2.0,
-        rationale="Strong uptrend setup.",
+        direction=SignalDirection.LONG,
+        entry_zone_low=61800.0,
+        entry_zone_high=62200.0,
+        stop_loss=61000.0,
+        take_profit=64000.0,
+        confidence=0.82,
+        rationale="Strong uptrend with EMA alignment.",
+        entry_reasoning="Near EMA 20 support.",
+        stop_reasoning="Below swing low at 61200.",
+        target_reasoning="Resistance at 64000.",
         confluence_factors=["EMA alignment", "Volume support"],
+        risk_factors=["Overhead resistance"],
     )
 
 
 # ---------------------------------------------------------------------------
-# QuantAgent tests
+# MacroAnalyst tests
 # ---------------------------------------------------------------------------
 
 
-class TestQuantAgent:
-    def test_run_returns_quant_signal(self, sample_snapshot: PairSnapshot) -> None:
-        """QuantAgent.run() returns a QuantSignal from mocked LLM."""
+class TestMacroAnalyst:
+    def test_run_returns_macro_signal(self, sample_sentiment: SentimentSnapshot) -> None:
         mock_response = json.dumps({
-            "symbol": "BTCUSDT",
-            "timeframe": "4h",
-            "trend_regime": "uptrend",
-            "signals": ["Price above 200 EMA"],
-            "confidence": 0.75,
-            "reasoning": "Bullish trend.",
-        })
-
-        with patch("tenth_floor.agents.quant_agent.call_llm", return_value=mock_response):
-            from tenth_floor.agents.quant_agent import QuantAgent
-            agent = QuantAgent()
-            result = agent.run(sample_snapshot)
-
-        assert isinstance(result, QuantSignal)
-        assert result.trend_regime == TrendRegime.UPTREND
-        assert result.confidence == 0.75
-
-    def test_prompt_contains_indicators(self, sample_snapshot: PairSnapshot) -> None:
-        """Prompt should include TA indicator values."""
-        from tenth_floor.agents.quant_agent import QuantAgent
-        prompt = QuantAgent._build_prompt(sample_snapshot)
-        assert "62000.0" in prompt  # EMA 20
-        assert "RSI 14: 55.0" in prompt
-
-
-# ---------------------------------------------------------------------------
-# SentimentAgent tests
-# ---------------------------------------------------------------------------
-
-
-class TestSentimentAgent:
-    def test_run_returns_sentiment_signal(
-        self, sample_sentiment_snapshot: SentimentSnapshot
-    ) -> None:
-        mock_response = json.dumps({
-            "bias": "greed",
-            "risk_narrative": "Market is greedy.",
-            "key_headlines": [],
+            "regime": "risk_on",
+            "regime_reasoning": "Low VIX, greed sentiment.",
+            "asset_class_impacts": [
+                {"asset_class": "crypto", "outlook": "bullish", "reasoning": "Risk on."},
+            ],
+            "alerts": [],
+            "vix_level": 15.0,
             "fear_greed_value": 65,
+            "dxy_trend": "stable",
         })
 
-        with patch("tenth_floor.agents.sentiment_agent.call_llm", return_value=mock_response):
-            from tenth_floor.agents.sentiment_agent import SentimentAgent
-            agent = SentimentAgent()
-            result = agent.run(sample_sentiment_snapshot)
+        with patch("tenth_floor.agents.macro_analyst.call_llm", return_value=mock_response):
+            from tenth_floor.agents.macro_analyst import MacroAnalyst
+            agent = MacroAnalyst()
+            result = agent.run(sample_sentiment)
 
-        assert isinstance(result, SentimentSignal)
-        assert result.bias == SentimentBias.GREED
+        assert isinstance(result, MacroSignal)
+        assert result.regime == MacroRegime.RISK_ON
         assert result.fear_greed_value == 65
+        assert result.dxy_trend == "stable"
+
+    def test_prompt_contains_fg_value(self, sample_sentiment: SentimentSnapshot) -> None:
+        from tenth_floor.agents.macro_analyst import MacroAnalyst
+        prompt = MacroAnalyst._build_prompt(sample_sentiment, None, None)
+        assert "65" in prompt
+        assert "Greed" in prompt
+
+    def test_prompt_includes_vix_data(self, sample_sentiment: SentimentSnapshot) -> None:
+        from tenth_floor.agents.macro_analyst import MacroAnalyst
+        vix = {"level": 22.5, "change_pct": 3.2, "trend": "rising"}
+        prompt = MacroAnalyst._build_prompt(sample_sentiment, vix, None)
+        assert "22.5" in prompt
+        assert "rising" in prompt
+
+    def test_prompt_includes_dxy_data(self, sample_sentiment: SentimentSnapshot) -> None:
+        from tenth_floor.agents.macro_analyst import MacroAnalyst
+        dxy = {"level": 104.5, "change_pct": -0.3, "trend": "weakening"}
+        prompt = MacroAnalyst._build_prompt(sample_sentiment, None, dxy)
+        assert "104.5" in prompt
+        assert "weakening" in prompt
 
 
 # ---------------------------------------------------------------------------
-# StrategyAgent tests
+# TradeAnalyst tests
 # ---------------------------------------------------------------------------
 
 
-class TestStrategyAgent:
-    def test_run_returns_setup_proposal(
-        self,
-        sample_snapshot: PairSnapshot,
-        sample_quant_signal: QuantSignal,
-        sample_sentiment_signal: SentimentSignal,
+class TestTradeAnalyst:
+    def test_run_returns_trade_proposal(
+        self, sample_snapshot: PairSnapshot, sample_macro: MacroSignal,
     ) -> None:
         mock_response = json.dumps({
             "symbol": "BTCUSDT",
-            "timeframe": "4h",
-            "direction": "long",
+            "timeframe": "1d",
             "action": "buy",
-            "entry_zone_low": 61690.0,
-            "entry_zone_high": 62310.0,
-            "stop_loss": 61090.0,
-            "take_profit": 63510.0,
-            "reward_risk_ratio": 2.0,
+            "direction": "long",
+            "entry_zone_low": 61800.0,
+            "entry_zone_high": 62200.0,
+            "stop_loss": 61000.0,
+            "take_profit": 64000.0,
+            "confidence": 0.78,
             "rationale": "Strong setup.",
+            "entry_reasoning": "Near EMA 20.",
+            "stop_reasoning": "Below swing low.",
+            "target_reasoning": "Resistance at 64000.",
             "confluence_factors": ["EMA alignment"],
+            "risk_factors": [],
         })
 
-        with patch("tenth_floor.agents.strategy_agent.call_llm", return_value=mock_response):
-            from tenth_floor.agents.strategy_agent import StrategyAgent
-            agent = StrategyAgent()
-            result = agent.run(sample_snapshot, sample_quant_signal, sample_sentiment_signal)
+        with patch("tenth_floor.agents.trade_analyst.call_llm", return_value=mock_response):
+            from tenth_floor.agents.trade_analyst import TradeAnalyst
+            agent = TradeAnalyst()
+            result = agent.run(sample_snapshot, sample_macro)
 
-        assert isinstance(result, SetupProposal)
-        assert result.direction == SignalDirection.LONG
+        assert isinstance(result, TradeProposal)
         assert result.action == SetupAction.BUY
+        assert result.direction == SignalDirection.LONG
+        assert result.confidence == 0.78
 
     def test_short_override_to_skip(
-        self,
-        sample_snapshot: PairSnapshot,
-        sample_quant_signal: QuantSignal,
-        sample_sentiment_signal: SentimentSignal,
+        self, sample_snapshot: PairSnapshot, sample_macro: MacroSignal,
     ) -> None:
-        """If LLM returns SHORT, StrategyAgent must override to SKIP."""
+        """If LLM returns SHORT, TradeAnalyst must override to SKIP."""
         mock_response = json.dumps({
             "symbol": "BTCUSDT",
-            "timeframe": "4h",
-            "direction": "short",
+            "timeframe": "1d",
             "action": "sell",
-            "entry_zone_low": 61690.0,
-            "entry_zone_high": 62310.0,
+            "direction": "short",
+            "entry_zone_low": 62000.0,
+            "entry_zone_high": 62500.0,
             "stop_loss": 63000.0,
             "take_profit": 60000.0,
-            "reward_risk_ratio": 2.0,
+            "confidence": 0.70,
             "rationale": "Bearish signal.",
             "confluence_factors": [],
+            "risk_factors": [],
         })
 
-        with patch("tenth_floor.agents.strategy_agent.call_llm", return_value=mock_response):
-            from tenth_floor.agents.strategy_agent import StrategyAgent
-            agent = StrategyAgent()
-            result = agent.run(sample_snapshot, sample_quant_signal, sample_sentiment_signal)
+        with patch("tenth_floor.agents.trade_analyst.call_llm", return_value=mock_response):
+            from tenth_floor.agents.trade_analyst import TradeAnalyst
+            agent = TradeAnalyst()
+            result = agent.run(sample_snapshot, sample_macro)
 
-        # Must be overridden to SKIP, not SHORT
         assert result.direction == SignalDirection.NEUTRAL
         assert result.action == SetupAction.SKIP
 
+    def test_symbol_override(
+        self, sample_snapshot: PairSnapshot, sample_macro: MacroSignal,
+    ) -> None:
+        """LLM symbol output is overridden with snapshot's authoritative symbol."""
+        mock_response = json.dumps({
+            "symbol": "btcusdt",
+            "timeframe": "1d",
+            "action": "buy",
+            "direction": "long",
+            "entry_zone_low": 61800.0,
+            "entry_zone_high": 62200.0,
+            "stop_loss": 61000.0,
+            "take_profit": 64000.0,
+            "confidence": 0.78,
+            "rationale": "Strong setup.",
+            "confluence_factors": [],
+            "risk_factors": [],
+        })
 
-class TestComputePriceLevels:
-    """Test that _compute_price_levels uses market-price entry with structural SL/TP."""
+        with patch("tenth_floor.agents.trade_analyst.call_llm", return_value=mock_response):
+            from tenth_floor.agents.trade_analyst import TradeAnalyst
+            agent = TradeAnalyst()
+            result = agent.run(sample_snapshot, sample_macro)
 
-    def _make_agent(self):
-        with patch("tenth_floor.agents.strategy_agent.load_agent_config", return_value={}):
-            from tenth_floor.agents.strategy_agent import StrategyAgent
-            return StrategyAgent()
+        assert result.symbol == "BTCUSDT"
 
-    def test_entry_at_market_price(self) -> None:
-        """Entry zone should be near current price, not anchored to support."""
-        indicators = TAIndicators(
-            ema_20=62000.0, ema_50=61500.0, ema_200=59000.0,
-            rsi_14=55.0, macd_line=100.0, macd_signal=80.0, macd_histogram=20.0,
-            bb_upper=63000.0, bb_middle=62000.0, bb_lower=61000.0,
-            atr_14=500.0, obv=1000000.0, volume_sma_20=50000.0,
-            support_levels=[61200.0, 61700.0],
-            resistance_levels=[62800.0, 63500.0],
-        )
-        snap = PairSnapshot(
-            symbol="BTCUSDT", timeframe="1d",
-            current_price=62000.0, bar_timestamp=1710374400000,
-            indicators=indicators,
-        )
-        agent = self._make_agent()
-        levels = agent._compute_price_levels(snap)
-
-        # Entry high = spot price, entry low = spot - 0.25*ATR
-        assert levels["entry_zone_high"] == 62000.0
-        assert levels["entry_zone_low"] == pytest.approx(62000.0 - 500.0 * 0.25)
-        # SL should be below nearest support (61700)
-        assert levels["stop_loss"] < 61700.0
-        # TP should target resistance at 62800
-        assert levels["take_profit"] == 62800.0
-
-    def test_tp_targets_resistance(self) -> None:
-        """TP should use resistance level when R:R >= minimum."""
-        indicators = TAIndicators(
-            ema_20=100.0, ema_50=98.0, ema_200=95.0,
-            rsi_14=50.0, macd_line=1.0, macd_signal=0.5, macd_histogram=0.5,
-            bb_upper=105.0, bb_middle=100.0, bb_lower=95.0,
-            atr_14=3.0, obv=100000.0, volume_sma_20=5000.0,
-            support_levels=[98.5],
-            resistance_levels=[108.0],
-        )
-        snap = PairSnapshot(
-            symbol="SOLUSDT", timeframe="1d",
-            current_price=100.0, bar_timestamp=1710374400000,
-            indicators=indicators,
-        )
-        agent = self._make_agent()
-        levels = agent._compute_price_levels(snap)
-
-        # Entry_mid ≈ 99.625, SL below support 98.5 (≈ 97.6)
-        # R:R = (108-99.625)/(99.625-97.6) ≈ 4.1 — well above 2.0
-        assert levels["take_profit"] == 108.0
-        assert levels["reward_risk_ratio"] > 2.0
-
-    def test_fallback_when_no_sr(self) -> None:
-        """Without S/R levels, falls back to ATR-based formula."""
-        indicators = TAIndicators(
-            ema_20=62000.0, ema_50=61500.0, ema_200=59000.0,
-            rsi_14=55.0, macd_line=100.0, macd_signal=80.0, macd_histogram=20.0,
-            bb_upper=63000.0, bb_middle=62000.0, bb_lower=61000.0,
-            atr_14=500.0, obv=1000000.0, volume_sma_20=50000.0,
-            support_levels=[], resistance_levels=[],
-        )
-        snap = PairSnapshot(
-            symbol="BTCUSDT", timeframe="1d",
-            current_price=62000.0, bar_timestamp=1710374400000,
-            indicators=indicators,
-        )
-        agent = self._make_agent()
-        levels = agent._compute_price_levels(snap)
-
-        # entry_high = price, entry_low = price - 0.25*ATR
-        assert levels["entry_zone_high"] == 62000.0
-        assert levels["entry_zone_low"] == pytest.approx(62000.0 - 125.0)
-        assert levels["reward_risk_ratio"] >= 2.0
-
-    def test_rr_varies_with_structure(self) -> None:
-        """R:R should NOT always be exactly 2.0 when S/R levels are present."""
-        indicators = TAIndicators(
-            ema_20=100.0, ema_50=98.0, ema_200=95.0,
-            rsi_14=50.0, macd_line=1.0, macd_signal=0.5, macd_histogram=0.5,
-            bb_upper=105.0, bb_middle=100.0, bb_lower=95.0,
-            atr_14=3.0, obv=100000.0, volume_sma_20=5000.0,
-            support_levels=[98.5],
-            resistance_levels=[110.0],
-        )
-        snap = PairSnapshot(
-            symbol="SOLUSDT", timeframe="1d",
-            current_price=100.0, bar_timestamp=1710374400000,
-            indicators=indicators,
-        )
-        agent = self._make_agent()
-        levels = agent._compute_price_levels(snap)
-
-        # With real S/R, R:R should vary — not be pinned to exactly 2.0
-        assert levels["reward_risk_ratio"] != 2.0
-        assert levels["reward_risk_ratio"] >= 2.0
+    def test_prompt_contains_indicators(
+        self, sample_snapshot: PairSnapshot, sample_macro: MacroSignal,
+    ) -> None:
+        from tenth_floor.agents.trade_analyst import TradeAnalyst
+        prompt = TradeAnalyst._build_prompt(sample_snapshot, sample_macro)
+        assert "62000.0" in prompt  # EMA 20
+        assert "RSI 14: 55.0" in prompt
+        assert "BTCUSDT" in prompt
+        assert "risk_on" in prompt
+        # Asset class is included and correctly matched
+        assert "ASSET CLASS: crypto" in prompt
+        assert "bullish: Risk-on favours crypto" in prompt
 
 
 # ---------------------------------------------------------------------------
-# RiskAgent tests
+# RiskReviewer tests
 # ---------------------------------------------------------------------------
 
 
-class TestRiskAgent:
-    def test_approve_valid_long(self, sample_proposal: SetupProposal) -> None:
-        """High-confidence LONG → APPROVED, conviction=high, risk=2%."""
-        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Strong setup approved."}]'):
-            from tenth_floor.agents.risk_agent import RiskAgent
-            agent = RiskAgent()
-            entries = agent.run([(sample_proposal, 0.82)])
+class TestRiskReviewer:
+    def test_run_returns_reviewed_signals(
+        self, sample_proposal: TradeProposal, sample_macro: MacroSignal,
+    ) -> None:
+        mock_response = json.dumps([{
+            "symbol": "BTCUSDT",
+            "verdict": "approve",
+            "conviction": "high",
+            "reasoning": "Strongest setup today.",
+            "risk_notes": "Watch overhead resistance.",
+        }])
 
-        assert len(entries) == 1
-        assert entries[0].verdict == PlaybookVerdict.APPROVED
-        assert entries[0].conviction == "high"
-        assert entries[0].suggested_risk_pct == 0.02
-        assert entries[0].confidence_score == 0.82
+        with patch("tenth_floor.agents.risk_reviewer.call_llm", return_value=mock_response):
+            from tenth_floor.agents.risk_reviewer import RiskReviewer
+            reviewer = RiskReviewer()
+            reviewed = reviewer.run([sample_proposal], sample_macro)
 
-    def test_approve_standard_conviction(self, sample_proposal: SetupProposal) -> None:
-        """Mid-confidence LONG → APPROVED, conviction=standard, risk=1%."""
-        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Acceptable setup."}]'):
-            from tenth_floor.agents.risk_agent import RiskAgent
-            agent = RiskAgent()
-            entries = agent.run([(sample_proposal, 0.71)])
+        assert len(reviewed) == 1
+        assert isinstance(reviewed[0], ReviewedSignal)
+        assert reviewed[0].verdict == ReviewVerdict.APPROVE
+        assert reviewed[0].conviction == "high"
 
-        assert len(entries) == 1
-        assert entries[0].verdict == PlaybookVerdict.APPROVED
-        assert entries[0].conviction == "standard"
-        assert entries[0].suggested_risk_pct == 0.01
-        assert entries[0].confidence_score == 0.71
+    def test_reject_verdict(
+        self, sample_proposal: TradeProposal, sample_macro: MacroSignal,
+    ) -> None:
+        mock_response = json.dumps([{
+            "symbol": "BTCUSDT",
+            "verdict": "reject",
+            "conviction": "standard",
+            "reasoning": "Macro headwind, risk-off regime.",
+            "risk_notes": "VIX elevated.",
+        }])
+
+        with patch("tenth_floor.agents.risk_reviewer.call_llm", return_value=mock_response):
+            from tenth_floor.agents.risk_reviewer import RiskReviewer
+            reviewer = RiskReviewer()
+            reviewed = reviewer.run([sample_proposal], sample_macro)
+
+        assert reviewed[0].verdict == ReviewVerdict.REJECT
+
+    def test_empty_proposals_returns_empty(self, sample_macro: MacroSignal) -> None:
+        from tenth_floor.agents.risk_reviewer import RiskReviewer
+        with patch("tenth_floor.agents.risk_reviewer.load_agent_config", return_value={}), \
+             patch("tenth_floor.agents.risk_reviewer.load_risk_profile", return_value={}):
+            reviewer = RiskReviewer()
+        assert reviewer.run([], sample_macro) == []
+
+    def test_parse_error_defaults_to_approve(
+        self, sample_proposal: TradeProposal, sample_macro: MacroSignal,
+    ) -> None:
+        """If LLM response is unparseable, default to approve with standard conviction."""
+        with patch("tenth_floor.agents.risk_reviewer.call_llm", return_value="not json"):
+            from tenth_floor.agents.risk_reviewer import RiskReviewer
+            reviewer = RiskReviewer()
+            reviewed = reviewer.run([sample_proposal], sample_macro)
+
+        assert len(reviewed) == 1
+        assert reviewed[0].verdict == ReviewVerdict.APPROVE
+        assert reviewed[0].conviction == "standard"
+
+    def test_missing_symbol_defaults_to_approve(
+        self, sample_proposal: TradeProposal, sample_macro: MacroSignal,
+    ) -> None:
+        """If LLM doesn't return a verdict for a symbol, default to approve."""
+        mock_response = json.dumps([{
+            "symbol": "ETHUSDT",
+            "verdict": "approve",
+            "conviction": "high",
+            "reasoning": "Wrong symbol.",
+            "risk_notes": "",
+        }])
+
+        with patch("tenth_floor.agents.risk_reviewer.call_llm", return_value=mock_response):
+            from tenth_floor.agents.risk_reviewer import RiskReviewer
+            reviewer = RiskReviewer()
+            reviewed = reviewer.run([sample_proposal], sample_macro)
+
+        assert len(reviewed) == 1
+        assert reviewed[0].symbol == "BTCUSDT"
+        assert reviewed[0].verdict == ReviewVerdict.APPROVE
+
+
+# ---------------------------------------------------------------------------
+# Validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestValidation:
+    def test_valid_proposal(self, sample_proposal: TradeProposal) -> None:
+        from tenth_floor.validation import validate_proposal
+        result = validate_proposal(sample_proposal)
+        assert result.valid is True
+        assert result.reward_risk_ratio >= 1.5
+
+    def test_skip_always_valid(self) -> None:
+        from tenth_floor.validation import validate_proposal
+        skip = TradeProposal(
+            symbol="BTCUSDT", timeframe="1d",
+            action=SetupAction.SKIP, direction=SignalDirection.NEUTRAL,
+            entry_zone_low=100.0, entry_zone_high=101.0,
+            stop_loss=95.0, take_profit=110.0,
+            confidence=0.2, rationale="No edge.",
+        )
+        result = validate_proposal(skip)
+        assert result.valid is True
 
     def test_reject_short(self) -> None:
-        """SHORT proposal → REJECTED with 'Spot only'."""
-        short_proposal = SetupProposal(
+        from tenth_floor.validation import validate_proposal
+        short = TradeProposal(
             symbol="BTCUSDT", timeframe="1d",
-            direction=SignalDirection.SHORT, action=SetupAction.SELL,
-            entry_zone_low=62000, entry_zone_high=62500,
-            stop_loss=63000, take_profit=60000,
-            reward_risk_ratio=2.0, rationale="Bearish.",
+            action=SetupAction.BUY, direction=SignalDirection.SHORT,
+            entry_zone_low=62000.0, entry_zone_high=62500.0,
+            stop_loss=63000.0, take_profit=60000.0,
+            confidence=0.7, rationale="Bearish.",
         )
+        result = validate_proposal(short)
+        assert result.valid is False
+        assert "SHORT" in result.reason
 
-        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Rejected."}]'):
-            from tenth_floor.agents.risk_agent import RiskAgent
-            agent = RiskAgent()
-            entries = agent.run([(short_proposal, 0.85)])
+    def test_reject_sl_above_entry(self) -> None:
+        from tenth_floor.validation import validate_proposal
+        bad = TradeProposal(
+            symbol="BTCUSDT", timeframe="1d",
+            action=SetupAction.BUY, direction=SignalDirection.LONG,
+            entry_zone_low=62000.0, entry_zone_high=62500.0,
+            stop_loss=63000.0, take_profit=66000.0,
+            confidence=0.7, rationale="Bad SL.",
+        )
+        result = validate_proposal(bad)
+        assert result.valid is False
+        assert "SL" in result.reason
 
-        assert entries[0].verdict == PlaybookVerdict.REJECTED
-        assert "Spot only" in entries[0].verdict_reasoning
-
-    def test_reject_low_confidence(self, sample_proposal: SetupProposal) -> None:
-        """Confidence below 0.65 threshold → REJECTED."""
-        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Low confidence."}]'):
-            from tenth_floor.agents.risk_agent import RiskAgent
-            agent = RiskAgent()
-            entries = agent.run([(sample_proposal, 0.50)])
-
-        assert entries[0].verdict == PlaybookVerdict.REJECTED
-        assert "Confidence" in entries[0].verdict_reasoning
-        assert entries[0].conviction == "none"
-        assert entries[0].suggested_risk_pct == 0.0
+    def test_reject_tp_below_entry(self) -> None:
+        from tenth_floor.validation import validate_proposal
+        bad = TradeProposal(
+            symbol="BTCUSDT", timeframe="1d",
+            action=SetupAction.BUY, direction=SignalDirection.LONG,
+            entry_zone_low=62000.0, entry_zone_high=62500.0,
+            stop_loss=61000.0, take_profit=62000.0,
+            confidence=0.7, rationale="Bad TP.",
+        )
+        result = validate_proposal(bad)
+        assert result.valid is False
+        assert "TP" in result.reason
 
     def test_reject_low_rr(self) -> None:
-        """R:R below configured minimum (2.0) → REJECTED."""
-        low_rr_proposal = SetupProposal(
+        from tenth_floor.validation import validate_proposal
+        # R:R = (63000 - 62250) / (62250 - 62000) = 750/250 = 3.0 — wait, need low R:R
+        # entry_mid = 62250, risk = 62250-62100 = 150, reward = 62400-62250 = 150 → R:R = 1.0
+        low_rr = TradeProposal(
             symbol="BTCUSDT", timeframe="1d",
-            direction=SignalDirection.LONG, action=SetupAction.BUY,
-            entry_zone_low=62000, entry_zone_high=62500,
-            stop_loss=60500, take_profit=63500,
-            reward_risk_ratio=1.5, rationale="Weak R:R.",
+            action=SetupAction.BUY, direction=SignalDirection.LONG,
+            entry_zone_low=62000.0, entry_zone_high=62500.0,
+            stop_loss=62000.0 - 1.0, take_profit=62500.0 + 1.0,
+            confidence=0.7, rationale="Low R:R.",
         )
+        result = validate_proposal(low_rr)
+        assert result.valid is False
+        assert "R:R" in result.reason
 
-        with patch("tenth_floor.agents.risk_agent.call_llm", return_value='[{"symbol": "BTCUSDT", "verdict_reasoning": "Low R:R."}]'):
-            from tenth_floor.agents.risk_agent import RiskAgent
-            agent = RiskAgent()
-            entries = agent.run([(low_rr_proposal, 0.82)])
+    def test_reject_sl_too_far(self) -> None:
+        from tenth_floor.validation import validate_proposal
+        # entry_mid = 62250, SL at 50000 → 19.7% below → exceeds 15%
+        far_sl = TradeProposal(
+            symbol="BTCUSDT", timeframe="1d",
+            action=SetupAction.BUY, direction=SignalDirection.LONG,
+            entry_zone_low=62000.0, entry_zone_high=62500.0,
+            stop_loss=50000.0, take_profit=90000.0,
+            confidence=0.7, rationale="SL too far.",
+        )
+        result = validate_proposal(far_sl)
+        assert result.valid is False
+        assert "15%" in result.reason
 
-        assert entries[0].verdict == PlaybookVerdict.REJECTED
-        assert "R:R" in entries[0].verdict_reasoning
+    def test_reject_entry_zone_inverted(self) -> None:
+        from tenth_floor.validation import validate_proposal
+        inverted = TradeProposal(
+            symbol="BTCUSDT", timeframe="1d",
+            action=SetupAction.BUY, direction=SignalDirection.LONG,
+            entry_zone_low=62500.0, entry_zone_high=62000.0,
+            stop_loss=61000.0, take_profit=65000.0,
+            confidence=0.7, rationale="Inverted zone.",
+        )
+        result = validate_proposal(inverted)
+        assert result.valid is False
+        assert "entry_zone_low" in result.reason
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +457,6 @@ class TestRiskAgent:
 
 class TestCleanJsonResponse:
     def test_strips_think_tags(self) -> None:
-        """Qwen3 <think> blocks should be stripped."""
         from tenth_floor.agents.base import clean_json_response
         raw = '<think>Let me analyze this...</think>{"key": "value"}'
         assert clean_json_response(raw) == '{"key": "value"}'
@@ -439,23 +478,26 @@ class TestCleanJsonResponse:
 
 
 class TestParseJsonResponse:
-    def test_valid_quant_signal(self) -> None:
+    def test_valid_macro_signal(self) -> None:
         from tenth_floor.agents.base import parse_json_response
         raw = json.dumps({
-            "symbol": "BTCUSDT", "timeframe": "4h",
-            "trend_regime": "uptrend",
-            "signals": ["Price above 200 EMA"],
-            "confidence": 0.75, "reasoning": "Bullish.",
+            "regime": "risk_on",
+            "regime_reasoning": "Low VIX.",
+            "asset_class_impacts": [],
+            "alerts": [],
+            "vix_level": 15.0,
+            "fear_greed_value": 65,
+            "dxy_trend": "stable",
         })
-        result = parse_json_response(raw, QuantSignal)
-        assert result.confidence == 0.75
+        result = parse_json_response(raw, MacroSignal)
+        assert result.regime == MacroRegime.RISK_ON
 
     def test_invalid_json_raises(self) -> None:
         from tenth_floor.agents.base import parse_json_response
         with pytest.raises(ValueError, match="Invalid JSON"):
-            parse_json_response("not json at all", QuantSignal)
+            parse_json_response("not json at all", MacroSignal)
 
     def test_schema_mismatch_raises(self) -> None:
         from tenth_floor.agents.base import parse_json_response
         with pytest.raises(ValueError, match="Schema validation"):
-            parse_json_response('{"wrong": "schema"}', QuantSignal)
+            parse_json_response('{"wrong": "schema"}', MacroSignal)

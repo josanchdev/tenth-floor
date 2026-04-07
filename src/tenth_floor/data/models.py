@@ -5,12 +5,11 @@ Layer overview
 --------------
 Data Layer    : OHLCVBar, SentimentSnapshot
 Feature Engine: TAIndicators, PairSnapshot
-Agent Outputs : QuantSignal, SentimentSignal, SetupProposal, PlaybookEntry
+Agent Outputs : MacroSignal, TradeProposal, ReviewedSignal, PlaybookEntry
 
-Design rules (from docs/v1_risks_and_constraints.md §2):
-  • Python computes all numbers → models carry pre-computed values only.
-  • Agent output schemas have NO free-form numeric fields —
-    only enums, labels, and quoted snapshot values.
+Design rules:
+  • Python computes indicators as context — LLM makes all trading decisions.
+  • Python validates LLM output for sanity (SL < entry < TP, R:R math).
   • Every model can round-trip through JSON (for Langfuse tracing).
 """
 
@@ -26,16 +25,6 @@ from pydantic import BaseModel, ConfigDict, Field
 # =====================================================================
 
 
-class TrendRegime(StrEnum):
-    """Market trend classification produced by QuantAgent."""
-
-    STRONG_UPTREND = "strong_uptrend"
-    UPTREND = "uptrend"
-    SIDEWAYS = "sideways"
-    DOWNTREND = "downtrend"
-    STRONG_DOWNTREND = "strong_downtrend"
-
-
 class SignalDirection(StrEnum):
     """Directional bias for a trade setup."""
 
@@ -44,18 +33,8 @@ class SignalDirection(StrEnum):
     NEUTRAL = "neutral"
 
 
-class SentimentBias(StrEnum):
-    """Macro sentiment bias label from SentimentAgent."""
-
-    EXTREME_GREED = "extreme_greed"
-    GREED = "greed"
-    NEUTRAL = "neutral"
-    FEAR = "fear"
-    EXTREME_FEAR = "extreme_fear"
-
-
 class SetupAction(StrEnum):
-    """What kind of trade action the strategy proposes."""
+    """What kind of trade action the agent proposes."""
 
     BUY = "buy"
     SELL = "sell"
@@ -64,10 +43,33 @@ class SetupAction(StrEnum):
 
 
 class PlaybookVerdict(StrEnum):
-    """RiskAgent's final verdict on a setup."""
+    """RiskReviewer's final verdict on a setup."""
 
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class MacroRegime(StrEnum):
+    """Market macro regime from MacroAnalyst."""
+
+    RISK_ON = "risk_on"
+    RISK_OFF = "risk_off"
+    MIXED = "mixed"
+    TRANSITIONING = "transitioning"
+
+
+class ReviewVerdict(StrEnum):
+    """RiskReviewer's verdict on a trade proposal."""
+
+    APPROVE = "approve"
+    REJECT = "reject"
+
+
+class ConvictionTier(StrEnum):
+    """RiskReviewer's conviction tier for a trade."""
+
+    HIGH = "high"
+    STANDARD = "standard"
 
 
 # =====================================================================
@@ -142,8 +144,9 @@ class SentimentSnapshot(BaseModel):
 class TAIndicators(BaseModel):
     """Technical analysis indicators computed by ``ta_calculator.py``.
 
-    All values are computed by Python (pandas-ta).  LLMs must consume
-    these as-is — they MUST NOT recompute or derive any numbers.
+    All values are computed by Python (pandas-ta). These are INPUT CONTEXT
+    for LLM agents — the LLM uses them for reasoning but makes its own
+    trading decisions.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -177,15 +180,6 @@ class TAIndicators(BaseModel):
         description="Latest bar volume / 20-period SMA volume. >1.5 = notable, >2.0 = surge",
     )
 
-    # Deterministic trend score (Python-computed, not LLM)
-    trend_score: float | None = Field(
-        None, ge=0.0, le=1.0,
-        description=(
-            "Deterministic indicator-agreement score (0–1). "
-            "Replaces LLM confidence for gating and conviction tiers."
-        ),
-    )
-
     # Reversal detection
     rsi_divergence: bool | None = Field(
         None,
@@ -210,14 +204,17 @@ class PairSnapshot(BaseModel):
     """The single typed payload that every agent receives.
 
     Assembled by ``pair_snapshot.py`` from OHLCV + TA + sentiment.
-    This is the **only** input contract for QuantAgent and SentimentAgent.
+    This is the **only** input contract for TradeAnalyst.
     """
 
     model_config = ConfigDict(frozen=True)
 
     # Identity
-    symbol: str = Field(..., description="Trading pair, e.g. 'BTCUSDT'")
-    timeframe: str = Field(..., description="Candle timeframe, e.g. '4h' or '1d'")
+    symbol: str = Field(..., description="Trading pair, e.g. 'BTCUSDT' or 'AAPL'")
+    timeframe: str = Field(..., description="Candle timeframe, e.g. '1d'")
+    asset_class: str | None = Field(
+        None, description="Asset class: 'crypto', 'equity', 'etf', 'commodity'"
+    )
 
     # Latest bar
     current_price: float = Field(..., gt=0, description="Most recent close price")
@@ -248,112 +245,120 @@ class PairSnapshot(BaseModel):
 
 
 # =====================================================================
-# 3 – Agent Outputs  (src/agents/)
+# 3 – Agent Outputs (Phase 1.5: AI-first architecture)
 # =====================================================================
 #
-# Rule: NO free-form numeric fields. Agents receive pre-computed
-#       numbers and may only quote them back, never recompute.
+# LLM agents make all trading decisions. Python validates output
+# for sanity but does not override. Three agents produce:
+#   MacroAnalyst  → MacroSignal
+#   TradeAnalyst  → TradeProposal
+#   RiskReviewer  → ReviewedSignal
 # =====================================================================
 
 
-class QuantSignal(BaseModel):
-    """Output of QuantAgent — trend regime and signal classification.
+class AssetClassImpact(BaseModel):
+    """Per-asset-class macro impact from MacroAnalyst."""
 
-    All numeric references are quoted from the input PairSnapshot.
+    model_config = ConfigDict(frozen=True)
+
+    asset_class: str = Field(..., description="e.g. 'crypto', 'equity', 'etf', 'commodity'")
+    outlook: str = Field(..., description="'bullish', 'bearish', or 'neutral'")
+    reasoning: str = Field(..., description="1-2 sentences on why")
+
+
+class MacroSignal(BaseModel):
+    """Output of MacroAnalyst — macro regime and per-class impact.
+
+    Runs once per pipeline. Its output frames every TradeAnalyst call.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    regime: MacroRegime = Field(..., description="Overall market regime")
+    regime_reasoning: str = Field(..., description="2-3 sentences explaining the regime call")
+    asset_class_impacts: list[AssetClassImpact] = Field(
+        default_factory=list,
+        description="Per-asset-class outlook and reasoning",
+    )
+    alerts: list[str] = Field(
+        default_factory=list,
+        description="Specific alerts: earnings, news catalysts, macro events",
+    )
+    vix_level: float | None = Field(None, description="Current VIX level")
+    fear_greed_value: int = Field(
+        ..., ge=0, le=100, description="Current F&G index value"
+    )
+    dxy_trend: str = Field(
+        ..., description="'strengthening', 'weakening', or 'stable'"
+    )
+
+
+class TradeProposal(BaseModel):
+    """Output of TradeAnalyst — LLM-decided trade setup.
+
+    The LLM picks entry, SL, TP based on structural analysis. Python
+    validates the output for sanity but does not override levels.
     """
 
     model_config = ConfigDict(frozen=True)
 
     symbol: str
     timeframe: str
-    trend_regime: TrendRegime = Field(
-        ..., description="Classified trend regime"
-    )
-    signals: list[str] = Field(
-        default_factory=list,
-        description="List of signal labels, e.g. ['RSI oversold', 'EMA golden cross']",
-    )
+    action: SetupAction = Field(..., description="'buy' or 'skip'")
+    direction: SignalDirection = Field(..., description="'long' or 'neutral'")
+
+    # LLM-chosen price levels (may be 0 for SKIPs — Python validation
+    # only runs on BUY proposals so the gt=0 check lives there, not here)
+    entry_zone_low: float = Field(..., ge=0, description="Lower bound of entry zone")
+    entry_zone_high: float = Field(..., ge=0, description="Upper bound of entry zone")
+    stop_loss: float = Field(..., ge=0, description="Stop-loss price")
+    take_profit: float = Field(..., ge=0, description="Take-profit price")
+
+    # LLM assessment
     confidence: float = Field(
         ..., ge=0.0, le=1.0,
-        description="Confidence score (0–1). Computed by Python from indicator consensus.",
+        description="TradeAnalyst's confidence in this setup (0-1)",
     )
-    reasoning: str = Field(
-        ..., description="LLM-generated reasoning for the classification"
-    )
-
-
-class SentimentSignal(BaseModel):
-    """Output of SentimentAgent — macro risk narrative and bias."""
-
-    model_config = ConfigDict(frozen=True)
-
-    bias: SentimentBias = Field(
-        ..., description="Macro sentiment bias label"
-    )
-    risk_narrative: str = Field(
-        ..., description="LLM-generated narrative describing market sentiment"
-    )
-    key_headlines: list[str] = Field(
+    rationale: str = Field(..., description="Full trade thesis — 3-5 sentences")
+    entry_reasoning: str = Field("", description="Why this entry zone")
+    stop_reasoning: str = Field("", description="Why this stop-loss level")
+    target_reasoning: str = Field("", description="Why this take-profit level")
+    confluence_factors: list[str] = Field(
         default_factory=list,
-        description="Most impactful headline titles selected by the agent",
+        description="Supporting factors for this trade",
     )
-    fear_greed_value: int = Field(
-        ..., ge=0, le=100,
-        description="Quoted F&G value from snapshot (not recomputed)",
+    risk_factors: list[str] = Field(
+        default_factory=list,
+        description="Risks and what could go wrong",
     )
 
 
-class SetupProposal(BaseModel):
-    """Output of StrategyAgent — a proposed trade setup with reasoning.
+class ReviewedSignal(BaseModel):
+    """Per-proposal verdict from RiskReviewer.
 
-    Entry, stop-loss, and take-profit are quoted from snapshot values
-    and risk_profile.json parameters computed by Python.
+    RiskReviewer sees ALL proposals at once and makes portfolio-level
+    decisions. This is a single item in the array it returns.
     """
 
     model_config = ConfigDict(frozen=True)
 
     symbol: str
-    timeframe: str
-    direction: SignalDirection = Field(
-        ..., description="Proposed trade direction"
-    )
-    action: SetupAction = Field(
-        ..., description="Proposed action"
-    )
+    verdict: ReviewVerdict = Field(..., description="'approve' or 'reject'")
+    conviction: ConvictionTier = Field(..., description="'high' or 'standard'")
+    reasoning: str = Field(..., description="Why approved/rejected — portfolio context")
+    risk_notes: str = Field("", description="Specific risk flags for this signal")
 
-    # Price levels (computed by Python, quoted by agent)
-    entry_zone_low: float = Field(
-        ..., gt=0, description="Lower bound of entry zone"
-    )
-    entry_zone_high: float = Field(
-        ..., gt=0, description="Upper bound of entry zone"
-    )
-    stop_loss: float = Field(
-        ..., gt=0, description="Stop-loss price (ATR-based, computed by Python)"
-    )
-    take_profit: float = Field(
-        ..., gt=0, description="Take-profit price (R:R-based, computed by Python)"
-    )
 
-    # Context
-    reward_risk_ratio: float = Field(
-        ..., gt=0, description="Reward-to-risk ratio (computed by Python)"
-    )
-    rationale: str = Field(
-        ..., description="LLM-generated reasoning for this setup"
-    )
-    confluence_factors: list[str] = Field(
-        default_factory=list,
-        description="List of supporting factors, e.g. ['RSI divergence', 'EMA support']",
-    )
+# =====================================================================
+# 4 – PlaybookEntry (final output contract for DB + Discord)
+# =====================================================================
 
 
 class PlaybookEntry(BaseModel):
-    """Output of RiskAgent — final vetted signal for the daily playbook.
+    """Final vetted signal for the daily playbook.
 
-    Represents one publishable (or rejected) signal. Approved entries
-    carry conviction tier and suggested risk percentage instead of
-    EUR position sizing.
+    Assembled by the pipeline from TradeProposal + ReviewedSignal.
+    This is the contract that signal_logger and discord_notifier consume.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -365,29 +370,28 @@ class PlaybookEntry(BaseModel):
         ..., description="ISO date of the playbook, e.g. '2026-03-14'"
     )
 
-    # Verdict
+    # Verdict (from RiskReviewer)
     verdict: PlaybookVerdict = Field(
-        ..., description="RiskAgent's final call"
+        ..., description="RiskReviewer's final call"
     )
     verdict_reasoning: str = Field(
         ..., description="Why the signal was approved or rejected"
     )
 
-    # Inherited from SetupProposal (pass-through if approved)
+    # Trade setup (from TradeAnalyst, validated by Python)
     direction: SignalDirection
-    action: SetupAction
     entry_zone_low: float = Field(..., gt=0)
     entry_zone_high: float = Field(..., gt=0)
     stop_loss: float = Field(..., gt=0)
     take_profit: float = Field(..., gt=0)
     reward_risk_ratio: float = Field(..., gt=0)
 
-    # Conviction tier (computed by Python from QuantAgent confidence)
+    # Conviction (from RiskReviewer)
     confidence_score: float = Field(
         ..., ge=0.0, le=1.0,
-        description="QuantAgent confidence score (0–1)",
+        description="TradeAnalyst confidence score (0–1)",
     )
-    conviction: str = Field(
+    conviction: ConvictionTier = Field(
         ..., description="Conviction tier: 'high' or 'standard'"
     )
     suggested_risk_pct: float = Field(
@@ -395,40 +399,12 @@ class PlaybookEntry(BaseModel):
         description="Suggested portfolio risk per trade (e.g. 0.02 = 2%)",
     )
 
-    # Summaries from upstream agents
-    quant_summary: str = Field("", description="Condensed QuantAgent reasoning")
-    sentiment_summary: str = Field("", description="Condensed SentimentAgent reasoning")
-    strategy_rationale: str = Field("", description="StrategyAgent rationale")
+    # Reasoning
+    rationale: str = Field("", description="TradeAnalyst trade thesis")
+    risk_notes: str = Field("", description="RiskReviewer risk flags")
 
     # Priority
     rank: int = Field(
         ..., ge=1,
         description="Priority rank within the playbook (1 = highest)",
     )
-
-
-# =====================================================================
-# Convenience: DailyPlaybook (top-level report container)
-# =====================================================================
-
-
-class DailyPlaybook(BaseModel):
-    """Top-level container for the daily report output."""
-
-    report_date: str = Field(..., description="ISO date, e.g. '2026-03-14'")
-    generated_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC),
-        description="UTC timestamp when the playbook was generated",
-    )
-    universe_size: int = Field(..., ge=0, description="Number of pairs analysed")
-    entries: list[PlaybookEntry] = Field(
-        default_factory=list, description="Sorted by rank ascending (1 = best)"
-    )
-    skipped_pairs: list[str] = Field(
-        default_factory=list, description="Pairs that were analysed but had no actionable setup"
-    )
-
-    @property
-    def approved_entries(self) -> list[PlaybookEntry]:
-        """Return only approved entries (rejected are excluded)."""
-        return [e for e in self.entries if e.verdict != PlaybookVerdict.REJECTED]

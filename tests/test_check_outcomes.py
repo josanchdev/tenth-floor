@@ -12,7 +12,6 @@ from tenth_floor.check_outcomes import _process_signal, check_outcomes
 from tenth_floor.data.models import (
     PlaybookEntry,
     PlaybookVerdict,
-    SetupAction,
     SignalDirection,
 )
 from tenth_floor.db.signal_logger import SignalLogger
@@ -62,7 +61,7 @@ def _make_signal(
         "take_profit": take_profit,
         "reward_risk": 2.0,
         "suggested_risk_pct": 0.02,
-        "strategy_rationale": "Test signal.",
+        "rationale": "Test signal.",
         "status": status,
         "outcome_price": None,
         "outcome_date": None,
@@ -230,7 +229,6 @@ class TestCheckOutcomesIntegration:
             verdict=PlaybookVerdict.APPROVED,
             verdict_reasoning="Strong setup.",
             direction=SignalDirection.LONG,
-            action=SetupAction.BUY,
             entry_zone_low=61690.0,
             entry_zone_high=62310.0,
             stop_loss=61090.0,
@@ -239,7 +237,7 @@ class TestCheckOutcomesIntegration:
             confidence_score=0.82,
             conviction="high",
             suggested_risk_pct=0.02,
-            strategy_rationale="Test.",
+            rationale="Test.",
             rank=1,
         )
         signal_id = sig_logger.log(entry)
@@ -285,12 +283,12 @@ class TestCheckOutcomesNotifier:
         entry = PlaybookEntry(
             symbol="BTCUSDT", timeframe="1d", report_date="2024-03-14",
             verdict=PlaybookVerdict.APPROVED, verdict_reasoning="Test.",
-            direction=SignalDirection.LONG, action=SetupAction.BUY,
+            direction=SignalDirection.LONG,
             entry_zone_low=61690.0, entry_zone_high=62310.0,
             stop_loss=61090.0, take_profit=63510.0,
             reward_risk_ratio=2.0, confidence_score=0.82,
             conviction="high", suggested_risk_pct=0.02,
-            strategy_rationale="Test.", rank=1,
+            rationale="Test.", rank=1,
         )
         signal_id = sig_logger.log(entry)
         sig_logger.update_signal(
@@ -345,12 +343,12 @@ class TestCheckOutcomesNotifier:
         entry = PlaybookEntry(
             symbol="BTCUSDT", timeframe="1d", report_date="2024-03-14",
             verdict=PlaybookVerdict.APPROVED, verdict_reasoning="Test.",
-            direction=SignalDirection.LONG, action=SetupAction.BUY,
+            direction=SignalDirection.LONG,
             entry_zone_low=61690.0, entry_zone_high=62310.0,
             stop_loss=61090.0, take_profit=63510.0,
             reward_risk_ratio=2.0, confidence_score=0.82,
             conviction="high", suggested_risk_pct=0.02,
-            strategy_rationale="Test.", rank=1,
+            rationale="Test.", rank=1,
         )
         sig_logger.log(entry)
 

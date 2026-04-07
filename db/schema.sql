@@ -40,26 +40,26 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 
 -- Pipeline funnel diagnostics — one row per daily run.
--- Tracks how many pairs were killed at each gate, enabling threshold tuning.
+-- Phase 1.5: AI-first pipeline stages replace V3 mechanical gates.
 CREATE TABLE IF NOT EXISTS pipeline_runs (
     run_date                 TEXT PRIMARY KEY,       -- YYYY-MM-DD
     created_at               TEXT NOT NULL,           -- ISO timestamp (UTC)
-    pairs_analyzed           INTEGER NOT NULL DEFAULT 0,
-    killed_trend_gate        INTEGER NOT NULL DEFAULT 0,
-    killed_strategy_skip     INTEGER NOT NULL DEFAULT 0,
-    killed_volume_gate       INTEGER NOT NULL DEFAULT 0,
-    killed_rs_gate           INTEGER NOT NULL DEFAULT 0,
-    killed_confidence_gate   INTEGER NOT NULL DEFAULT 0,
-    killed_rr_gate           INTEGER NOT NULL DEFAULT 0,
-    killed_leader_corr_gate  INTEGER NOT NULL DEFAULT 0,
-    killed_sector_cap        INTEGER NOT NULL DEFAULT 0,
-    killed_signal_cap        INTEGER NOT NULL DEFAULT 0,
-    proposals_generated      INTEGER NOT NULL DEFAULT 0,
-    approved                 INTEGER NOT NULL DEFAULT 0,
+    assets_in_universe       INTEGER NOT NULL DEFAULT 0,
+    snapshots_built          INTEGER NOT NULL DEFAULT 0,
+    pre_screen_passed        INTEGER NOT NULL DEFAULT 0,
+    pre_screen_killed        INTEGER NOT NULL DEFAULT 0,
+    trade_analyst_buy        INTEGER NOT NULL DEFAULT 0,
+    trade_analyst_skip       INTEGER NOT NULL DEFAULT 0,
+    trade_analyst_error      INTEGER NOT NULL DEFAULT 0,
+    validation_passed        INTEGER NOT NULL DEFAULT 0,
+    validation_failed        INTEGER NOT NULL DEFAULT 0,
+    reviewer_approved        INTEGER NOT NULL DEFAULT 0,
+    reviewer_rejected        INTEGER NOT NULL DEFAULT 0,
+    signal_cap_killed        INTEGER NOT NULL DEFAULT 0,
     published                INTEGER NOT NULL DEFAULT 0,
     profile                  TEXT,                    -- 'validation', 'production', or NULL
     fear_greed_value         INTEGER,                 -- Fear & Greed index at run time
-    asset_class              TEXT                     -- 'crypto', 'equity', 'etf', 'commodity', or NULL for all
+    macro_regime             TEXT                     -- MacroAnalyst regime assessment
 );
 
 -- Tweet auto-poster — tracks posted tweets for dedup and analytics.

@@ -99,7 +99,7 @@ philosophy. But applied to ~40 assets that are structurally uncorrelated.
 - The TA indicators are mathematically identical across asset classes —
   RSI, EMA, MACD, Bollinger Bands work the same on AAPL as on BTCUSDT
 - The trend scoring logic (`ta_calculator.py`) is already fully asset-agnostic
-- The RiskAgent verdict logic is pure Python with config-driven rules
+- The agent verdict logic is config-driven
 - The agent prompts are ~85% asset-agnostic; only language references "crypto"
 - The Pydantic models (`PairSnapshot`, `PlaybookEntry`) carry no crypto assumptions
 
@@ -118,7 +118,7 @@ two BTC-specific gates. Everything else transfers with zero or trivial changes.
 | `ta_calculator.py` | Pure pandas-ta math. Trend score, RSI divergence, swing levels — all universal |
 | `data/models.py` | `PairSnapshot`, `TAIndicators`, `PlaybookEntry` — no crypto assumptions in the schemas |
 | `agents/base.py` | LLM call pattern, JSON parsing, think-block cleaning — provider-agnostic |
-| `agents/risk_agent.py` verdict logic | Pure Python: R:R check, confidence threshold, conviction tiers. Config-driven |
+| Agent verdict logic | Config-driven conviction tiers and confidence thresholds |
 | `features/pair_snapshot.py` | Assembles snapshot from OHLCV + TA + sentiment. Asset-class agnostic |
 | Signal logging (SQLite) | `UNIQUE(pair, timeframe, report_date)` works for any symbol format |
 | Pipeline diagnostics/funnel | Gate kill counts are universal |
@@ -686,14 +686,10 @@ interesting content even on zero-signal days.
 ## What Does NOT Change
 
 - **Philosophy:** Silence as default. Publish only when evidence is overwhelming.
-- **Gate chain:** All 7+ gates remain. Thresholds remain strict.
 - **LONG only, no leverage.** Applies to all asset classes.
-- **Python owns all arithmetic.** LLMs interpret, never compute.
+- **Python validates LLM output.** Sanity checks, R:R floor, distance bounds.
 - **1d timeframe only.** Daily candles across all asset classes.
-- **Deterministic trend scoring.** Same 7-signal indicator agreement score.
 - **Duplicate-safe re-runs.** Same UNIQUE constraint logic.
-- **Capitulation bypass logic.** Crypto F&G rising from extreme fear + RSI
-  divergence. Applies to crypto only (equities use VIX, different thresholds).
 
 ---
 
@@ -732,18 +728,42 @@ analysis across crypto, stocks, and commodities."
 - ~~Fix: honest R:R (no manufactured targets), symbol override, asset_class logging~~
 - Market calendar integration (`exchange_calendars`) — deferred, not blocking
 
-### Phase 1.5: AI-First Signal Generation
+### Phase 1.5: AI-First Signal Generation (complete — 2026-04-07)
 
-> **The architectural shift.** Move from "Python decides, LLM rubber-stamps" to
-> "LLM decides, Python validates." The LLM becomes the trader. Python becomes
-> the data provider and safety net.
+> **The architectural shift.** Moved from "Python decides, LLM rubber-stamps" to
+> "LLM decides, Python validates." The LLM is the trader. Python is the data
+> provider and safety net.
+
+#### What was delivered
+
+The full AI-first pipeline is live and verified with real market data. End-to-end
+run on 2026-04-07 (F&G=11, VIX=25.53, risk-off): 36 assets scanned, 35 BUY
+proposals, 7 caught by Python validation (R:R < 1.5), 28 reviewed by
+RiskReviewer, 27 approved, 2 published (signal cap). Discord embeds and tweet
+draft posted successfully.
+
+Key decisions made during implementation:
+- **Minimal prompts.** Agent prompts define role + output format only. No
+  prescriptive trading rules, no "when to skip" checklists, no fixed factor
+  lists. The LLM reasons freely with its own trading knowledge. Python validates
+  the math. This was a deliberate shift after the initial prompts were too
+  restrictive (34/36 assets skipped in risk-off because the prompt treated macro
+  as a universal veto).
+- **Asset class routing.** Each PairSnapshot carries its `asset_class` from
+  universe.json. The MacroAnalyst's per-class outlook is matched by class, not
+  by symbol string. TradeAnalyst sees the asset class label in its prompt.
+- **Token budget discipline.** RTX 3090 supports 10240 total tokens with
+  Qwen3-32B-AWQ. RiskReviewer uses compact per-proposal format (~2 lines each)
+  to fit 30 proposals within budget. All agents verified to fit worst-case.
+- **Graceful SKIP handling.** TradeProposal allows zero price fields for SKIPs
+  (LLMs naturally return 0 when passing). Validation only runs on BUY proposals.
 
 #### Why this phase exists
 
-The current pipeline uses the LLM as a rubber stamp. Python computes all prices
-(entry, SL, TP), a mechanical `trend_score` overrides the LLM's confidence, and
-RiskAgent's accept/reject is pure Python rules. The agents are expensive window
-dressing — the only real LLM decision is StrategyAgent's BUY/SKIP.
+V3 used the LLM as a rubber stamp. Python computed all prices (entry, SL, TP),
+a mechanical `trend_score` overrode the LLM's confidence, and RiskAgent's
+accept/reject was pure Python rules. The agents were expensive window dressing —
+the only real LLM decision was StrategyAgent's BUY/SKIP.
 
 Modern reasoning models can do much more. Given rich context (indicators, macro,
 structural levels, news), they can reason like a professional trader: identify
@@ -898,43 +918,125 @@ ranges. The 1.5 floor may need per-class tuning after validation data accumulate
 
 #### LLM call budget
 
+**Phase 1.5 (3090, current):**
 - 1 MacroAnalyst call
-- ~30-36 TradeAnalyst calls (most assets pass the permissive pre-screen)
-- 1 RiskReviewer call
-- Total: ~32-38 calls per run
+- ~30-36 TradeAnalyst calls
+- 1 RiskReviewer call (batch — all proposals in one call)
+- Total: ~32-38 calls per run, ~4-5 minutes on RTX 3090
 
-Current pipeline: ~14-20 calls (Quant + Strategy per passing asset + Sentiment
-+ Risk). The new architecture uses more calls but each call is more productive
-(one coherent analysis instead of two fragmented ones, plus the RiskReviewer
-sees the full portfolio).
+**Phase 2 (5090, planned):**
+- 1 MacroAnalyst call
+- ~30-36 TradeAnalyst calls
+- ~20-30 RiskReviewer calls (per-proposal with full context)
+- Total: ~52-68 calls per run, ~8-10 minutes on RTX 5090
+- Higher call count but dramatically better reasoning quality per call
 
-On RTX 3090 with Qwen3-32B-AWQ: ~6 seconds per call = ~3.5 minutes for
-TradeAnalyst + ~10 seconds each for MacroAnalyst and RiskReviewer. Total
-pipeline time: ~4-5 minutes. Acceptable for a daily run.
+---
 
-### Phase 2: Macro Enrichment
-- MacroAnalyst v2: RSS feed expansion (8 feeds across crypto + financial news)
-- Macro data fetchers: 10Y yield via FRED, earnings calendar via yfinance
-- Specific alert system (earnings in N days, major news catalysts)
-- Richer per-asset context injection into TradeAnalyst prompts
-- Conditional entry zones for equities (`CONDITIONAL_OPEN` + `VOID` status)
-- Two-pass pipeline scheduling (equities pass + crypto pass)
-- Outcome checker: market calendar awareness, VOID handling
+### Phase 2: Signal Quality (5090 deployment)
 
-### Phase 3: Validation
-- Run new architecture in validation mode for 30+ days
-- Manual review of MacroAnalyst and TradeAnalyst output quality
-- Compare signal quality metrics: LLM-chosen levels vs old Python-computed levels
-- Backtest full multi-asset universe on 90 days of historical data
-- Tune per-asset-class thresholds if needed (via config profiles)
-- A/B comparison: old pipeline vs new on same day's data
+> **The only thing that matters.** Signal quality is the product. Everything
+> else — delivery, UI, business features — is packaging. Phase 2 is entirely
+> about making every published signal one that a professional trader would
+> respect and a subscriber would trust.
 
-### Phase 4: Launch
+Phase 2 is structured in three sub-phases. 2A enables 2B (infrastructure
+unlocks the token budget for richer context). 2C is independent and can
+be done in parallel.
+
+#### Phase 2A: Infrastructure + Reasoning Quality
+
+Deploy to 5090 and fix the structural quality issues identified during
+Phase 1.5 validation runs.
+
+- **Docker Compose deployment** — vLLM + pipeline as services, reproducible
+  across machines. `.env.3090` / `.env.5090` hardware profiles controlling
+  context length, GPU utilization, model selection, and token budgets.
+- **Per-proposal RiskReviewer** — Replace batch review (compressed 2-line
+  summaries, 96% approval rate) with individual per-proposal calls. Each
+  call receives: full trade thesis, macro frame, portfolio state (open
+  signals + already-approved signals today). The CRO can actually reason:
+  "LINK at RSI 46 in risk-off is weak. GLD is the right play here. REJECT."
+- **TradeAnalyst prompt refinement** — Remove "a separate system validates
+  your math" (creates moral hazard — LLM outsources R:R to Python). Add
+  business context: "You serve paying subscribers. Your reputation depends
+  on every signal. Silence is preferred over a mediocre setup."
+- **Macro-aware signal ranking** — When the signal cap activates, rank by
+  macro alignment, not just raw confidence. In risk-off: safe-haven signals
+  outrank risk-asset signals at equal confidence.
+- **Model evaluation** — Test Qwen 3.5 (or latest available) on the 5090.
+  32GB VRAM may support unquantized models or larger context windows.
+  Better reasoning = better signal quality with the same minimal prompts.
+
+#### Phase 2B: Context Enrichment
+
+Give the LLM the information a real trader reads every morning. This is
+the #1 quality gap — the MacroAnalyst currently has 3 data points (VIX,
+F&G, DXY) and no idea *why* the market is moving.
+
+- **RSS feed integration** — 8 feeds across crypto + financial news.
+  MacroAnalyst v2 receives full headlines + summaries, not just F&G.
+  Enables reasoning like "tariff-driven sell-off hurts tech but is
+  neutral to gold" instead of generic "risk-off."
+- **10Y yield via FRED** — Bond yield context for treasury/rate-sensitive
+  plays. Cheap to add, valuable for TLT and financials reasoning.
+- **Earnings calendar via yfinance** — Per-asset alerts injected into
+  TradeAnalyst prompt: "AAPL earnings in 3 days — elevated vol risk."
+  The per-proposal RiskReviewer can flag: "reject, earnings risk."
+- **Asset-specific news injection** — TradeAnalyst receives news relevant
+  to its specific asset, not just class-level macro. Requires the 5090
+  token budget to include this without compressing everything else.
+
+#### Phase 2C: Equities-Specific
+
+Independent of 2A/2B. Can be done in parallel.
+
+- **Conditional entry zones** — `CONDITIONAL_OPEN` status for equities
+  that need market-hours confirmation. `VOID` if conditions change.
+- **Two-pass pipeline scheduling** — Equities pass (pre-market or at open)
+  + crypto pass (any time). RiskReviewer on second pass sees first-pass
+  approvals in portfolio state.
+- **Outcome checker: market calendar** — Skip weekends/holidays for
+  equities. `exchange_calendars` integration. VOID handling.
+
+### Phase 3: Validation + Track Record
+
+Run the Phase 2 architecture for 30+ days to build a verifiable track record
+before launch. Signal quality must be proven, not assumed.
+
+- Run pipeline daily, log all signals and outcomes to SQLite
+- Manual review: would a pro trader agree with each signal?
+- Performance metrics: hit rate, average R:R achieved, win/loss by class
+- Compare risk-off vs risk-on signal quality (the Phase 1.5 weakness)
+- Backtest full universe on 90 days of historical data
+- Tune per-asset-class R:R floors if data supports it
+- A/B: Phase 1.5 prompts vs Phase 2 prompts on same day's data
+
+### Phase 4: Launch + Delivery
+
+Only after Phase 3 proves signal quality. These are packaging and
+distribution — they don't affect the core product.
+
+**Core launch:**
 - Publish multi-asset signals to Discord (per-asset-class channels)
 - Update tweet drafter for multi-asset content
-- Update dashboard with asset-class filters
-- Update landing page and product description
-- Social media content strategy for multi-asset narrative
+- Update dashboard with asset-class filters and performance tracking
+- Public track record page (verified P&L, transparency builds trust)
+- Landing page and social media strategy for multi-asset narrative
+
+**Delivery improvements (post-launch, prioritise by subscriber feedback):**
+- Discord bot (interactive: /explain, /portfolio, /why-skip commands)
+- Telegram channel (broader reach, better mobile notifications)
+- Subscriber web dashboard (signal history, portfolio builder, alerts)
+- Email digest (weekly recap with win/loss stats)
+- Tiered subscriptions (free: delayed signals, paid: real-time + thesis)
+
+**Future (Phase 5+, not planned):**
+- API access for power users
+- Web-based control plane for pipeline management
+- Forex expansion
+- Multi-language support
+- Backtested performance reports for marketing
 
 ---
 
@@ -952,7 +1054,7 @@ Concretely:
 - All config is file-driven (JSON/YAML), not hardcoded. A web UI can
   edit the same files.
 - All state lives in SQLite. A web dashboard reads the same DB.
-- MacroAgent, gate logic, and signal delivery are separate modules.
+- Agents, validation, and signal delivery are separate modules.
   A web UI can trigger them independently.
 
 This is not extra work — it's just not painting yourself into a corner.
@@ -966,11 +1068,9 @@ This is not extra work — it's just not painting yourself into a corner.
    leverage conventions). Recommendation: defer to V5. Crypto + equities
    + ETFs + commodities is already a significant expansion.
 
-2. **LLM capacity:** 36 assets × 2 LLM calls each (Quant + Strategy)
-   = 72 LLM calls per full run. Current 26 pairs are mostly pre-filtered
-   (only 5-10 hit LLM). With uncorrelated assets, more will pass the
-   trend pre-filter. Need to verify vLLM throughput on RTX 3090 can
-   handle 40-50 LLM calls per run within acceptable time.
+2. **LLM capacity:** 1 MacroAnalyst + ~36 TradeAnalyst + 1 RiskReviewer
+   = ~38 LLM calls per full run. At ~6 seconds per call on RTX 3090,
+   total pipeline time is ~4-5 minutes. Acceptable for a daily run.
 
 3. **Backtester scope:** Current backtester replays deterministic gates
    only (no LLM). For equity validation, do we need LLM-in-the-loop

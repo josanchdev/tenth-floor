@@ -1,10 +1,5 @@
 # Deployment & Operations
 
-> **Note:** This document describes the current deployment. Phase 1.5 (AI-first)
-> will change the agent architecture (MacroAnalyst + TradeAnalyst + RiskReviewer
-> replacing the current 4 agents), increase LLM calls per run (~17-27 vs ~14-20),
-> and may adjust pipeline runtime. See [ROADMAP.md](../ROADMAP.md) Phase 1.5.
-
 This guide covers running The Tenth Floor AI in production: inference
 server setup, daily scheduling, outcome tracking, and monitoring.
 
@@ -89,8 +84,9 @@ python -m tenth_floor.main --profile validation
 python -m tenth_floor.main --log-level DEBUG
 ```
 
-Typical runtime: ~4-6 minutes for the full 36-asset universe (depends
-on LLM throughput and how many assets pass pre-screening).
+Typical runtime: ~4-6 minutes for the full 36-asset universe. LLM call
+budget: 1 MacroAnalyst + ~30-36 TradeAnalyst + 1 RiskReviewer = ~32-38
+calls per run at ~6 seconds each on RTX 3090.
 
 ### Operational Script
 

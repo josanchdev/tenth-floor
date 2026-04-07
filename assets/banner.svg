@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" width="1500" height="500">
+  <defs>
+    <!-- Subtle purple glow on right side only -->
+    <radialGradient id="aurora1" cx="90%" cy="50%" r="35%">
+      <stop offset="0%" stop-color="#7c3aed" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+
+    <!-- Line stroke: white with subtle purple fade at the end -->
+    <linearGradient id="lineStroke" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="20%" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="70%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="90%" stop-color="#d8b4fe" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0.4"/>
+    </linearGradient>
+
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Dark base -->
+  <rect width="1500" height="500" fill="#0a0a0f"/>
+
+  <!-- Subtle aurora on right -->
+  <rect width="1500" height="500" fill="url(#aurora1)"/>
+
+  <!-- Flat line → 3 steps up → flat line out -->
+  <polyline
+    points="
+      -20,290
+      550,290
+      550,230
+      700,230
+      700,170
+      850,170
+      850,120
+      1520,120
+    "
+    fill="none"
+    stroke="url(#lineStroke)"
+    stroke-width="6"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+    filter="url(#glow)"
+  />
+</svg>

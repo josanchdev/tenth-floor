@@ -10,7 +10,6 @@ import pytest
 from tenth_floor.data.models import (
     PlaybookEntry,
     PlaybookVerdict,
-    SetupAction,
     SignalDirection,
 )
 from tenth_floor.db.signal_logger import SignalLogger
@@ -35,7 +34,6 @@ def approved_entry() -> PlaybookEntry:
         verdict=PlaybookVerdict.APPROVED,
         verdict_reasoning="Strong setup.",
         direction=SignalDirection.LONG,
-        action=SetupAction.BUY,
         entry_zone_low=61690.0,
         entry_zone_high=62310.0,
         stop_loss=61090.0,
@@ -44,7 +42,7 @@ def approved_entry() -> PlaybookEntry:
         confidence_score=0.82,
         conviction="high",
         suggested_risk_pct=0.02,
-        strategy_rationale="EMA alignment with volume support.",
+        rationale="EMA alignment with volume support.",
         rank=1,
     )
 
@@ -58,14 +56,13 @@ def rejected_entry() -> PlaybookEntry:
         verdict=PlaybookVerdict.REJECTED,
         verdict_reasoning="Confidence too low.",
         direction=SignalDirection.LONG,
-        action=SetupAction.BUY,
         entry_zone_low=3400.0,
         entry_zone_high=3440.0,
         stop_loss=3300.0,
         take_profit=3600.0,
         reward_risk_ratio=2.0,
         confidence_score=0.55,
-        conviction="none",
+        conviction="standard",
         suggested_risk_pct=0.0,
         rank=2,
     )

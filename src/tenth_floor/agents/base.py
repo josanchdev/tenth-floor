@@ -85,7 +85,7 @@ def load_agent_config(agent_name: str) -> dict:
     Parameters
     ----------
     agent_name:
-        Agent key in the YAML file, e.g. ``"quant_agent"``.
+        Agent key in the YAML file, e.g. ``"trade_analyst"``.
 
     Returns
     -------

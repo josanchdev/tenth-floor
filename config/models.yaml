@@ -1,5 +1,10 @@
 # LLM model assignments for each agent.
 #
+# Phase 1.5: AI-first architecture
+#   MacroAnalyst  — macro regime assessment (runs once)
+#   TradeAnalyst  — per-asset trade analysis (runs per candidate)
+#   RiskReviewer  — portfolio-level review (runs once, sees all proposals)
+#
 # Provider routing: change 'defaults.provider' and 'defaults.base_url'
 # to switch all agents at once, or override per agent for mixed deployments.
 #
@@ -15,21 +20,18 @@ defaults:
   timeout: 30.0                          # seconds; covers slow vLLM cold-starts
   max_retries: 3                         # retries on transient failures (502, timeout, etc.)
 
-quant_agent:
-  temperature: 0.1          # Low temp → deterministic regime classification
-  max_output_tokens: 512    # Output is ~150 tokens of JSON; keep low to fit 4096 context
+macro_analyst:
+  temperature: 0.2          # Slightly creative for regime narrative
+  max_output_tokens: 1024   # Per-class impact + regime reasoning
 
-sentiment_agent:
-  temperature: 0.3          # Slightly higher → richer narrative
-  max_output_tokens: 512
+trade_analyst:
+  temperature: 0.10         # Low temp → consistent analysis
+  max_output_tokens: 2048   # Full trade thesis with level reasoning (~800 tokens typical)
 
-strategy_agent:
-  temperature: 0.1          # Low temp → consistent structured JSON output
-  max_output_tokens: 512    # Output is ~200 tokens of JSON; keep low to fit 4096 context
-
-risk_agent:
-  temperature: 0.0          # Zero temp → strict rule application
-  max_output_tokens: 512
+risk_reviewer:
+  temperature: 0.10         # Low temp → consistent portfolio decisions
+  max_output_tokens: 2048   # ~50 tokens per verdict × up to 30 proposals = ~1500
+  timeout: 60.0             # Longer timeout — larger prompt with all proposals
 
 tweet_drafter:
   temperature: 0.7          # Higher temp → creative, varied tweets

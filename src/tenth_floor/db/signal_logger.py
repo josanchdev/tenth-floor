@@ -24,7 +24,7 @@ from pathlib import Path
 import yaml
 
 from tenth_floor.config import CONFIG_DIR, PROJECT_ROOT
-from tenth_floor.data.models import PlaybookEntry, PlaybookVerdict
+from tenth_floor.data.models import PlaybookEntry, PlaybookVerdict  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ class SignalLogger:
         Parameters
         ----------
         entry:
-            A ``PlaybookEntry`` from RiskAgent.
+            A ``PlaybookEntry`` from the pipeline.
         langfuse_trace_id:
             Optional Langfuse trace ID for observability linkage.
         asset_class:
@@ -172,7 +172,7 @@ class SignalLogger:
                 entry_low, entry_high, stop_loss, take_profit,
                 reward_risk, suggested_risk_pct, strategy_rationale,
                 status, langfuse_trace_id, asset_class
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, COALESCE(?, 'crypto'))
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, COALESCE(?, 'unknown'))
             """,
             (
                 signal_id, now, entry.report_date, entry.symbol, entry.timeframe,
@@ -180,7 +180,7 @@ class SignalLogger:
                 entry.entry_zone_low, entry.entry_zone_high,
                 entry.stop_loss, entry.take_profit,
                 entry.reward_risk_ratio, entry.suggested_risk_pct,
-                entry.strategy_rationale,
+                entry.rationale,
                 langfuse_trace_id,
                 asset_class,
             ),
@@ -262,6 +262,7 @@ class SignalLogger:
         run_date: str,
         funnel: object,
         fear_greed_value: int | None = None,
+        macro_regime: str | None = None,
     ) -> None:
         """Persist pipeline funnel diagnostics.
 
@@ -273,6 +274,8 @@ class SignalLogger:
             A ``FunnelTracker`` instance (or any object with matching attributes).
         fear_greed_value:
             Current Fear & Greed index value (for tweet drafter context).
+        macro_regime:
+            MacroAnalyst regime assessment (e.g. ``"risk_on"``).
         """
         from tenth_floor.agents.base import _active_profile
 
@@ -280,28 +283,29 @@ class SignalLogger:
         self._conn.execute(
             """
             INSERT OR REPLACE INTO pipeline_runs (
-                run_date, created_at, pairs_analyzed,
-                killed_trend_gate, killed_strategy_skip, killed_volume_gate,
-                killed_rs_gate, killed_confidence_gate, killed_rr_gate,
-                killed_leader_corr_gate, killed_sector_cap, killed_signal_cap,
-                proposals_generated, approved, published, profile,
-                fear_greed_value
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                run_date, created_at, assets_in_universe, snapshots_built,
+                pre_screen_passed, pre_screen_killed,
+                trade_analyst_buy, trade_analyst_skip, trade_analyst_error,
+                validation_passed, validation_failed,
+                reviewer_approved, reviewer_rejected,
+                signal_cap_killed, published, profile, fear_greed_value,
+                macro_regime
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                run_date, now, funnel.pairs_analyzed,  # type: ignore[union-attr]
-                funnel.killed_trend_gate, funnel.killed_strategy_skip,  # type: ignore[union-attr]
-                funnel.killed_volume_gate, funnel.killed_rs_gate,  # type: ignore[union-attr]
-                funnel.killed_confidence_gate, funnel.killed_rr_gate,  # type: ignore[union-attr]
-                funnel.killed_leader_corr_gate, funnel.killed_sector_cap,  # type: ignore[union-attr]
-                funnel.killed_signal_cap,  # type: ignore[union-attr]
-                funnel.proposals_generated, funnel.approved,  # type: ignore[union-attr]
-                funnel.published, _active_profile,  # type: ignore[union-attr]
-                fear_greed_value,
+                run_date, now,
+                funnel.assets_in_universe, funnel.snapshots_built,  # type: ignore[union-attr]
+                funnel.pre_screen_passed, funnel.pre_screen_killed,  # type: ignore[union-attr]
+                funnel.trade_analyst_buy, funnel.trade_analyst_skip,  # type: ignore[union-attr]
+                funnel.trade_analyst_error,  # type: ignore[union-attr]
+                funnel.validation_passed, funnel.validation_failed,  # type: ignore[union-attr]
+                funnel.reviewer_approved, funnel.reviewer_rejected,  # type: ignore[union-attr]
+                funnel.signal_cap_killed, funnel.published,  # type: ignore[union-attr]
+                _active_profile, fear_greed_value, macro_regime,
             ),
         )
         self._conn.commit()
-        logger.info("Pipeline run logged  date=%s  fg=%s", run_date, fear_greed_value)
+        logger.info("Pipeline run logged  date=%s  fg=%s  regime=%s", run_date, fear_greed_value, macro_regime)
 
     # ------------------------------------------------------------------
     # Read methods for tweet drafter

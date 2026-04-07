@@ -175,16 +175,6 @@ class TACalculator:
         # --- Swing highs / lows (structural S/R) ---
         support_levels, resistance_levels = self._detect_swing_levels(df)
 
-        # --- Deterministic trend score ---
-        current_price = _safe_float(df["close"].iloc[-1])
-        trend_score = self._compute_trend_score(
-            current_price=current_price,
-            ema_20=ema_20, ema_50=ema_50, ema_200=ema_200,
-            rsi_14=rsi_14,
-            macd_histogram=macd_histogram,
-            volume_ratio=volume_ratio,
-        )
-
         indicators = TAIndicators(
             ema_20=ema_20,
             ema_50=ema_50,
@@ -201,7 +191,6 @@ class TACalculator:
             volume_sma_20=volume_sma_20,
             volume_ratio=volume_ratio,
             rsi_divergence=rsi_divergence,
-            trend_score=trend_score,
             support_levels=support_levels,
             resistance_levels=resistance_levels,
         )
@@ -285,64 +274,6 @@ class TACalculator:
             return True
 
         return False
-
-    # ------------------------------------------------------------------
-    # Deterministic trend score
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _compute_trend_score(
-        *,
-        current_price: float | None,
-        ema_20: float | None,
-        ema_50: float | None,
-        ema_200: float | None,
-        rsi_14: float | None,
-        macd_histogram: float | None,
-        volume_ratio: float | None,
-    ) -> float | None:
-        """Compute a deterministic 0–1 score from indicator agreement.
-
-        Each indicator contributes a binary signal (bullish or not).
-        The score is the fraction of available indicators that are bullish.
-        This replaces the LLM-generated confidence for gating and conviction
-        tier assignment.
-
-        Signals (LONG-biased, for spot swing trading):
-          1. Price > EMA 20   (short-term trend OK)
-          2. Price > EMA 50   (medium-term trend OK)
-          3. Price > EMA 200  (long-term trend OK)
-          4. EMA 20 > EMA 50  (no death cross)
-          5. RSI in 40–70      (momentum without exhaustion)
-          6. MACD histogram > 0 (bullish momentum)
-          7. Volume ratio >= 1.0 (at least average activity)
-
-        Returns None when fewer than 3 indicators are available.
-        """
-        if current_price is None:
-            return None
-
-        checks: list[bool] = []
-
-        if ema_20 is not None:
-            checks.append(current_price > ema_20)
-        if ema_50 is not None:
-            checks.append(current_price > ema_50)
-        if ema_200 is not None:
-            checks.append(current_price > ema_200)
-        if ema_20 is not None and ema_50 is not None:
-            checks.append(ema_20 > ema_50)
-        if rsi_14 is not None:
-            checks.append(40.0 <= rsi_14 <= 70.0)
-        if macd_histogram is not None:
-            checks.append(macd_histogram > 0)
-        if volume_ratio is not None:
-            checks.append(volume_ratio >= 1.0)
-
-        if len(checks) < 3:
-            return None
-
-        return round(sum(checks) / len(checks), 2)
 
     # ------------------------------------------------------------------
     # Structural support / resistance (swing pivots)

@@ -79,16 +79,21 @@ class TweetDraftFile(BaseModel):
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are a tweet ghostwriter for The Tenth Floor — an AI-powered crypto swing-trade \
-analysis service built by a solo founder. The AI scans 26 pairs daily through 7 \
-filtering gates and publishes max 2 signals per day. Most days it publishes zero.
+You are a tweet ghostwriter for The Tenth Floor — an AI-powered multi-asset swing-trade \
+analysis service built by a solo founder. The AI scans ~36 assets daily (crypto, equities, \
+ETFs, commodities) through a multi-agent pipeline and publishes max 3 signals per day. \
+Most days it publishes zero.
+
+The pipeline uses three AI agents:
+- MacroAnalyst: reads VIX, Fear & Greed, DXY to assess the macro regime
+- TradeAnalyst: analyses each asset individually, picks its own entry/SL/TP levels
+- RiskReviewer: sees all proposals together, makes portfolio-level approval decisions
 
 You receive today's pipeline data. Draft 2 tweet options (different angles).
 
 WHAT MAKES A GREAT TWEET:
 1. ONE idea per tweet. Don't cram every stat. Pick the most interesting angle and \
-commit to it. If the trend gate killed 21 pairs, that's the tweet — don't also \
-mention volume, strategy, and R:R.
+commit to it. If the TradeAnalyst skipped 30 out of 36 assets, that's the tweet.
 2. TENSION. The best tweets challenge something or create contrast. Position The \
 Tenth Floor against the industry norm (signal spam, hype, leverage gambling). \
 Give the reader a villain or a surprising take.
@@ -109,15 +114,15 @@ VOICE:
 
 TWEET TYPES (pick the best fit for today's data):
 
-1. FUNNEL REPORT — Pick ONE gate or stat that tells the best story.
-   "26 pairs scanned today. The trend gate alone killed 21 of them. Most signal \
-services would've traded all 26. The Tenth Floor's AI is built to say no. Today \
-it rejected everything. That's not a failure — that's the product working."
+1. FUNNEL REPORT — Pick ONE pipeline stage or stat that tells the best story.
+   "36 assets scanned today. The TradeAnalyst looked at every chart, read the macro, \
+and said skip on 34 of them. Most signal services would've traded all 36. The Tenth \
+Floor's AI is built to say no. That's not a failure — that's the product working."
 
-2. MARKET COMMENTARY — React to Fear & Greed or macro with a take.
-   "Fear & Greed is at 13. Everyone's calling the bottom. The Tenth Floor's AI \
-has a capitulation bypass that can buy in extreme fear — but only when the index \
-is rising AND the pair shows RSI divergence. Neither happened today. So it waits."
+2. MARKET COMMENTARY — React to Fear & Greed, VIX, or macro regime with a take.
+   "Fear & Greed is at 13. VIX spiking. Everyone's calling the bottom. The Tenth \
+Floor's MacroAnalyst flagged risk-off regime. The TradeAnalyst still found one setup \
+with clean structure. AI doesn't panic — it reads the chart."
 
 3. PHILOSOPHY — Challenge a norm. Teach through contrast.
    "Most signal services publish 5-10 trades a day so at least something hits. \
@@ -125,15 +130,14 @@ The Tenth Floor published zero today. And yesterday. And the day before. We buil
 an AI that treats silence as a feature. The best trade is the one you don't take."
 
 4. SIGNAL DAY — When there ARE approved signals. Tease, never reveal.
-   "First signal in 8 days. 26 pairs entered the pipeline. 7 gates stood in \
-the way. One pair survived all of them. Not sharing which one here — that's \
+   "First signal in 8 days. 36 assets entered the pipeline. Three AI agents stood \
+in the way. One asset survived all of them. Not sharing which one here — that's \
 what the Discord is for. But the AI found something worth risking capital on."
-   Never reveal the specific pair or price levels.
+   Never reveal the specific asset or price levels.
 
 THREAD — OPTIONAL, RARELY NEEDED:
 Most days, one dense tweet is enough. Only use a thread when the topic genuinely \
-needs more space (explaining a technical concept, walking through all 7 gates step \
-by step, or telling a multi-part story). If you use a thread, each reply <= 280 chars.
+needs more space. If you use a thread, each reply <= 280 chars.
 
 RULES:
 - Tweet text MUST be <= 280 characters. Count carefully.
@@ -279,22 +283,27 @@ class TweetDrafter:
         fg_value = run.get("fear_greed_value", "unknown")
         fg_label = _fg_label(fg_value) if isinstance(fg_value, int) else "unknown"
 
+        macro_regime = run.get("macro_regime", "unknown")
+
         lines = [
             f"DATE: {context['report_date']}",
             "",
-            "FUNNEL:",
-            f"- Pairs analyzed: {run.get('pairs_analyzed', 0)}",
-            f"- Killed at trend gate: {run.get('killed_trend_gate', 0)}",
-            f"- Killed at strategy: {run.get('killed_strategy_skip', 0)}",
-            f"- Killed at volume gate: {run.get('killed_volume_gate', 0)}",
-            f"- Killed at leader RS: {run.get('killed_rs_gate', 0)}",
-            f"- Killed at confidence: {run.get('killed_confidence_gate', 0)}",
-            f"- Killed at R:R gate: {run.get('killed_rr_gate', 0)}",
-            f"- Killed at class-leader correlation: {run.get('killed_leader_corr_gate', 0)}",
-            f"- Killed at sector cap: {run.get('killed_sector_cap', 0)}",
-            f"- Approved: {run.get('approved', 0)}",
+            "PIPELINE FUNNEL:",
+            f"- Assets in universe: {run.get('assets_in_universe', 0)}",
+            f"- Snapshots built: {run.get('snapshots_built', 0)}",
+            f"- Pre-screen passed: {run.get('pre_screen_passed', 0)}",
+            f"- Pre-screen killed: {run.get('pre_screen_killed', 0)}",
+            f"- TradeAnalyst BUY: {run.get('trade_analyst_buy', 0)}",
+            f"- TradeAnalyst SKIP: {run.get('trade_analyst_skip', 0)}",
+            f"- TradeAnalyst errors: {run.get('trade_analyst_error', 0)}",
+            f"- Validation passed: {run.get('validation_passed', 0)}",
+            f"- Validation failed: {run.get('validation_failed', 0)}",
+            f"- RiskReviewer approved: {run.get('reviewer_approved', 0)}",
+            f"- RiskReviewer rejected: {run.get('reviewer_rejected', 0)}",
+            f"- Signal cap killed: {run.get('signal_cap_killed', 0)}",
             f"- Published: {run.get('published', 0)}",
             "",
+            f"MACRO REGIME: {macro_regime}",
             f"FEAR & GREED: {fg_value} ({fg_label})",
             "",
             f"DAYS SINCE LAST SIGNAL: {context.get('days_since_last_signal', 'never')}",

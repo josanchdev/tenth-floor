@@ -1,13 +1,21 @@
 """
-Daily pipeline orchestrator — The Tenth Floor AI.
+Daily pipeline orchestrator — The Tenth Floor AI (Phase 1.5: AI-first).
 
-Fetches OHLCV + sentiment, runs the 4-agent pipeline, logs approved
-signals to SQLite, and posts a consolidated embed to Discord.
+Pipeline flow:
+  1. Fetch OHLCV data (ccxt + yfinance)
+  2. Fetch sentiment + macro indicators (F&G, VIX, DXY)
+  3. Build PairSnapshots (TA indicators + structure)
+  4. MacroAnalyst (1 LLM call — macro regime + per-class impact)
+  5. Pre-screen (data-quality only — very permissive)
+  6. TradeAnalyst (1 LLM call per candidate — BUY/SKIP + price levels)
+  7. Python validation (sanity checks on LLM output)
+  8. RiskReviewer (1 LLM call — portfolio-level review of all proposals)
+  9. Signal cap + persist + notify
 
 Usage::
 
     python -m tenth_floor.main                    # full universe
-    python -m tenth_floor.main BTCUSDT ETHUSDT    # specific symbols
+    python -m tenth_floor.main BTCUSDT AAPL       # specific symbols
     python -m tenth_floor.main --dry-run           # skip Discord + DB
     python -m tenth_floor.main --asset-class crypto # crypto only
 """
@@ -21,16 +29,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from tenth_floor.agents.base import load_risk_profile, set_active_profile
-from tenth_floor.agents.quant_agent import QuantAgent
-from tenth_floor.agents.risk_agent import RiskAgent
-from tenth_floor.agents.sentiment_agent import SentimentAgent
-from tenth_floor.agents.strategy_agent import StrategyAgent
+from tenth_floor.agents.macro_analyst import MacroAnalyst
+from tenth_floor.agents.risk_reviewer import RiskReviewer
+from tenth_floor.agents.trade_analyst import TradeAnalyst
 from tenth_floor.data.market_data import MarketDataFetcher
 from tenth_floor.data.models import (
+    ConvictionTier,
     PlaybookEntry,
     PlaybookVerdict,
-    SetupProposal,
-    TrendRegime,
+    ReviewVerdict,
+    TradeProposal,
 )
 from tenth_floor.data.sentiment import SentimentFetcher
 from tenth_floor.data.yfinance_data import YFinanceDataFetcher
@@ -38,6 +46,7 @@ from tenth_floor.db.signal_logger import SignalLogger
 from tenth_floor.features.pair_snapshot import SnapshotBuilder
 from tenth_floor.notifications.discord_notifier import DiscordNotifier
 from tenth_floor.universe import Universe, load_universe
+from tenth_floor.validation import validate_proposal
 
 try:
     from langfuse.decorators import langfuse_context
@@ -55,42 +64,46 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FunnelTracker:
-    """Accumulates gate-kill counts through the pipeline."""
+    """Accumulates pipeline stage counts for diagnostics."""
 
-    pairs_analyzed: int = 0
-    killed_trend_gate: int = 0
-    killed_strategy_skip: int = 0
-    killed_volume_gate: int = 0
-    killed_rs_gate: int = 0
-    killed_confidence_gate: int = 0
-    killed_rr_gate: int = 0
-    killed_leader_corr_gate: int = 0
-    killed_sector_cap: int = 0
-    killed_signal_cap: int = 0
-    proposals_generated: int = 0
-    approved: int = 0
+    assets_in_universe: int = 0
+    assets_fetched: int = 0
+    snapshots_built: int = 0
+    pre_screen_passed: int = 0
+    pre_screen_killed: int = 0
+    trade_analyst_buy: int = 0
+    trade_analyst_skip: int = 0
+    trade_analyst_error: int = 0
+    validation_passed: int = 0
+    validation_failed: int = 0
+    reviewer_approved: int = 0
+    reviewer_rejected: int = 0
+    signal_cap_killed: int = 0
     published: int = 0
 
     def summary_lines(self) -> list[str]:
         """Return the funnel as human-readable lines."""
         lines = [
-            f"  {self.pairs_analyzed} assets analysed",
+            f"  {self.assets_in_universe} assets in universe",
+            f"  {self.assets_fetched:3d} fetched from data sources",
+            f"  {self.snapshots_built} snapshots built",
         ]
-        gates = [
-            (self.killed_trend_gate, "trend regime gate"),
-            (self.killed_strategy_skip, "strategy (SKIP)"),
-            (self.killed_volume_gate, "volume gate"),
-            (self.killed_rs_gate, "class-leader relative strength"),
-            (self.killed_confidence_gate, "confidence gate"),
-            (self.killed_rr_gate, "R:R gate"),
-            (self.killed_leader_corr_gate, "class-leader correlation guard"),
-            (self.killed_sector_cap, "sector diversity cap"),
-            (self.killed_signal_cap, "signal cap"),
-        ]
-        for count, label in gates:
-            if count > 0:
-                lines.append(f"  {count:3d} killed at {label}")
-        lines.append(f"  {self.approved:3d} approved")
+        if self.pre_screen_killed > 0:
+            lines.append(f"  {self.pre_screen_killed:3d} killed at pre-screen (data quality)")
+        lines.append(f"  {self.pre_screen_passed:3d} sent to TradeAnalyst")
+        if self.trade_analyst_skip > 0:
+            lines.append(f"  {self.trade_analyst_skip:3d} skipped by TradeAnalyst")
+        if self.trade_analyst_error > 0:
+            lines.append(f"  {self.trade_analyst_error:3d} TradeAnalyst errors")
+        lines.append(f"  {self.trade_analyst_buy:3d} BUY proposals")
+        if self.validation_failed > 0:
+            lines.append(f"  {self.validation_failed:3d} failed Python validation")
+        lines.append(f"  {self.validation_passed:3d} sent to RiskReviewer")
+        if self.reviewer_rejected > 0:
+            lines.append(f"  {self.reviewer_rejected:3d} rejected by RiskReviewer")
+        if self.signal_cap_killed > 0:
+            lines.append(f"  {self.signal_cap_killed:3d} killed at signal cap")
+        lines.append(f"  {self.reviewer_approved:3d} approved")
         lines.append(f"  {self.published:3d} published")
         return lines
 
@@ -121,6 +134,99 @@ def _fetch_all_ohlcv(
     return results
 
 
+def _fetch_macro_indicators() -> tuple[dict | None, dict | None]:
+    """Fetch VIX and DXY data for MacroAnalyst.
+
+    Returns (vix_data, dxy_data) dicts or None on failure.
+    """
+    try:
+        import yfinance as yf
+
+        vix_data = None
+        dxy_data = None
+
+        # VIX
+        try:
+            vix = yf.Ticker("^VIX")
+            hist = vix.history(period="10d")
+            if len(hist) >= 2:
+                level = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2])
+                change_pct = round((level - prev) / prev * 100, 2)
+                # 5-day trend
+                if len(hist) >= 5:
+                    start = float(hist["Close"].iloc[-5])
+                    if level > start * 1.05:
+                        trend = "rising"
+                    elif level < start * 0.95:
+                        trend = "falling"
+                    else:
+                        trend = "stable"
+                else:
+                    trend = "insufficient data"
+                vix_data = {"level": round(level, 2), "change_pct": change_pct, "trend": trend}
+                logger.info("VIX: %.2f (%+.2f%%) trend=%s", level, change_pct, trend)
+        except Exception:
+            logger.warning("Failed to fetch VIX data", exc_info=True)
+
+        # DXY (US Dollar Index)
+        try:
+            dxy = yf.Ticker("DX-Y.NYB")
+            hist = dxy.history(period="10d")
+            if len(hist) >= 2:
+                level = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2])
+                change_pct = round((level - prev) / prev * 100, 2)
+                if len(hist) >= 5:
+                    start = float(hist["Close"].iloc[-5])
+                    if level > start * 1.01:
+                        trend = "strengthening"
+                    elif level < start * 0.99:
+                        trend = "weakening"
+                    else:
+                        trend = "stable"
+                else:
+                    trend = "insufficient data"
+                dxy_data = {"level": round(level, 2), "change_pct": change_pct, "trend": trend}
+                logger.info("DXY: %.2f (%+.2f%%) trend=%s", level, change_pct, trend)
+        except Exception:
+            logger.warning("Failed to fetch DXY data", exc_info=True)
+
+        return vix_data, dxy_data
+
+    except ImportError:
+        logger.warning("yfinance not installed — skipping macro indicators")
+        return None, None
+
+
+def _pre_screen(snapshots: list, funnel: FunnelTracker) -> list:
+    """Data-quality pre-screen — extremely permissive.
+
+    Kills only:
+    - Assets with fewer than 10 recent closes
+    - Assets with zero volume for 5+ consecutive days
+    """
+    passed = []
+    for snap in snapshots:
+        # Check minimum data
+        if len(snap.recent_closes) < 10:
+            logger.info("Pre-screen SKIP  %s — insufficient data", snap.symbol)
+            funnel.pre_screen_killed += 1
+            continue
+
+        # Check for zero volume (5+ consecutive days)
+        recent_vols = snap.recent_volumes[:5]
+        if recent_vols and all(v == 0 for v in recent_vols):
+            logger.info("Pre-screen SKIP  %s — zero volume for 5+ days", snap.symbol)
+            funnel.pre_screen_killed += 1
+            continue
+
+        passed.append(snap)
+
+    funnel.pre_screen_passed = len(passed)
+    return passed
+
+
 @lf_observe(name="daily_pipeline")
 def run_pipeline(
     symbols: list[str] | None = None,
@@ -142,30 +248,35 @@ def run_pipeline(
     Returns
     -------
     list[PlaybookEntry]
-        All entries produced by RiskAgent (approved + rejected).
+        All approved entries for today.
     """
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     logger.info("=== THE TENTH FLOOR — daily run %s ===", today)
     funnel = FunnelTracker()
+    risk_profile = load_risk_profile()
 
     # ── Load universe ─────────────────────────────────────────────
     universe = load_universe()
     if symbols is None:
         symbols = universe.symbols(asset_class=asset_class)
+    funnel.assets_in_universe = len(symbols)
     logger.info("Universe: %d symbols%s", len(symbols),
                 f" (asset_class={asset_class})" if asset_class else "")
 
     # ── 1. Fetch market data ────────────────────────────────────────
-    logger.info("Step 1/6: Fetching OHLCV data")
+    logger.info("Step 1/9: Fetching OHLCV data")
     ohlcv_data = _fetch_all_ohlcv(universe, symbols)
+    funnel.assets_fetched = len(ohlcv_data)
 
-    # ── 2. Fetch sentiment (once, shared across all pairs) ──────────
-    logger.info("Step 2/6: Fetching sentiment snapshot")
+    # ── 2. Fetch sentiment + macro indicators ────────────────────────
+    logger.info("Step 2/9: Fetching sentiment + macro indicators")
     sentiment_fetcher = SentimentFetcher()
     sentiment_snapshot = sentiment_fetcher.fetch_snapshot()
 
+    vix_data, dxy_data = _fetch_macro_indicators()
+
     # ── 3. Build PairSnapshots ──────────────────────────────────────
-    logger.info("Step 3/6: Building pair snapshots")
+    logger.info("Step 3/9: Building pair snapshots")
     builder = SnapshotBuilder()
     snapshots = builder.build_universe(ohlcv_data, sentiment=sentiment_snapshot)
 
@@ -173,299 +284,216 @@ def run_pipeline(
         logger.warning("No snapshots built — nothing to analyse")
         return []
 
-    funnel.pairs_analyzed = len(snapshots)
+    # Enrich snapshots with asset class from universe
+    enriched: list = []
+    for snap in snapshots:
+        ac = universe.asset_class_for(snap.symbol)
+        if ac and ac != snap.asset_class:
+            snap = snap.model_copy(update={"asset_class": ac})
+        enriched.append(snap)
+    snapshots = enriched
+
+    funnel.snapshots_built = len(snapshots)
     logger.info("Built %d snapshots", len(snapshots))
 
-    # ── 4. Run agent pipeline per snapshot ──────────────────────────
-    logger.info("Step 4/6: Running agent pipeline (%d snapshots)", len(snapshots))
-    sentiment_agent = SentimentAgent()
-
-    # SentimentAgent runs once on the shared snapshot
+    # ── 4. MacroAnalyst ─────────────────────────────────────────────
+    logger.info("Step 4/9: Running MacroAnalyst")
+    macro_analyst = MacroAnalyst()
     try:
-        sentiment_signal = sentiment_agent.run(sentiment_snapshot)
+        macro_signal = macro_analyst.run(sentiment_snapshot, vix_data, dxy_data)
         logger.info(
-            "SentimentAgent done  bias=%s  fg=%d",
-            sentiment_signal.bias.value,
-            sentiment_signal.fear_greed_value,
+            "MacroAnalyst done  regime=%s  fg=%d  vix=%s  dxy=%s",
+            macro_signal.regime.value,
+            macro_signal.fear_greed_value,
+            macro_signal.vix_level,
+            macro_signal.dxy_trend,
         )
     except Exception:
-        logger.exception("SentimentAgent failed — aborting pipeline")
+        logger.exception("MacroAnalyst failed — aborting pipeline")
         return []
 
-    # ── 4a. Capitulation detection ──────────────────────────────────
-    fg_trend = sentiment_snapshot.fear_greed_trend
-    fg_rising_from_extreme = False
-    if len(fg_trend) >= 3 and fg_trend[0] < 25:
-        trough = min(fg_trend)
-        if fg_trend[0] > trough and (fg_trend[0] - trough) >= 3:
-            fg_rising_from_extreme = True
-            logger.info(
-                "F&G rising from extreme fear: current=%d trough=%d — "
-                "capitulation bypass ARMED",
-                fg_trend[0], trough,
-            )
-
-    # ── 4b. Deterministic pre-filter ────────────────────────────────
-    risk_profile = load_risk_profile()
-    min_confidence = risk_profile.get("min_setup_confidence", 0.65)
-    _STRONG_DOWNTREND_SCORE = 0.15
-
-    llm_candidates = []
-    for snap in snapshots:
-        score = snap.indicators.trend_score
-        if score is not None and score < min_confidence:
-            if score <= _STRONG_DOWNTREND_SCORE:
-                has_rsi_div = snap.indicators.rsi_divergence is True
-                if fg_rising_from_extreme and has_rsi_div:
-                    llm_candidates.append(snap)
-                    logger.info(
-                        "Pre-filter PASS  %s  trend_score=%.2f — "
-                        "capitulation bypass (F&G rising + RSI div)",
-                        snap.symbol, score,
-                    )
-                else:
-                    funnel.killed_trend_gate += 1
-                    logger.info(
-                        "Pre-filter SKIP  %s  trend_score=%.2f — "
-                        "strong downtrend (no LLM needed)",
-                        snap.symbol, score,
-                    )
-            else:
-                funnel.killed_strategy_skip += 1
-                logger.info(
-                    "Pre-filter SKIP  %s  trend_score=%.2f < %.2f — "
-                    "below confidence threshold (no LLM needed)",
-                    snap.symbol, score, min_confidence,
-                )
-        else:
-            llm_candidates.append(snap)
-
+    # ── 5. Pre-screen ───────────────────────────────────────────────
+    logger.info("Step 5/9: Pre-screening %d snapshots", len(snapshots))
+    candidates = _pre_screen(snapshots, funnel)
     logger.info(
-        "Pre-filter: %d/%d assets need LLM evaluation (saved %d LLM call pairs)",
-        len(llm_candidates), len(snapshots),
-        len(snapshots) - len(llm_candidates),
+        "Pre-screen: %d/%d passed (killed %d)",
+        len(candidates), len(snapshots), funnel.pre_screen_killed,
     )
 
-    _REJECT_REGIMES = {TrendRegime.STRONG_DOWNTREND}
-    _VOLUME_CONFIRM_REGIMES = {TrendRegime.DOWNTREND}
-    _MIN_VOLUME_RATIO = 1.3
+    # ── 6. TradeAnalyst ─────────────────────────────────────────────
+    logger.info("Step 6/9: Running TradeAnalyst on %d candidates", len(candidates))
+    trade_analyst = TradeAnalyst()
+    buy_proposals: list[TradeProposal] = []
 
-    proposals: list[tuple[SetupProposal, float]] = []
-
-    # ── 4c. Class-leader relative strength baselines ────────────────
-    # Compute % change for each class leader so we can compare members.
-    leader_pct_changes: dict[str, float] = {}
-    leader_approved: dict[str, bool] = {}
-    for leader_symbol in universe.class_leaders():
-        leader_approved[leader_symbol] = False
-        for snap in snapshots:
-            if snap.symbol == leader_symbol and len(snap.recent_closes) >= 2:
-                newest, oldest = snap.recent_closes[0], snap.recent_closes[-1]
-                if oldest > 0:
-                    leader_pct_changes[leader_symbol] = (newest - oldest) / oldest
-                break
-
-    # ── 4d. LLM pipeline — only for qualifying symbols ──────────────
-    quant_agent = QuantAgent()
-    strategy_agent = StrategyAgent()
-
-    for snap in llm_candidates:
+    for snap in candidates:
         try:
-            quant_signal = quant_agent.run(snap)
-            logger.info(
-                "QuantAgent  %s %s  trend=%s  llm_conf=%.2f  trend_score=%s",
-                snap.symbol, snap.timeframe,
-                quant_signal.trend_regime.value, quant_signal.confidence,
-                snap.indicators.trend_score,
-            )
+            proposal = trade_analyst.run(snap, macro_signal)
 
-            # Gate: skip strong downtrends
-            if quant_signal.trend_regime in _REJECT_REGIMES:
-                has_rsi_div = snap.indicators.rsi_divergence is True
-                if fg_rising_from_extreme and has_rsi_div:
-                    logger.info(
-                        "Trend gate BYPASS  %s %s  regime=%s — "
-                        "capitulation setup (F&G rising + RSI divergence)",
-                        snap.symbol, snap.timeframe,
-                        quant_signal.trend_regime.value,
-                    )
-                else:
-                    logger.info(
-                        "Trend gate SKIP  %s %s  regime=%s — falling knife",
-                        snap.symbol, snap.timeframe,
-                        quant_signal.trend_regime.value,
-                    )
-                    funnel.killed_trend_gate += 1
-                    continue
-
-            proposal = strategy_agent.run(snap, quant_signal, sentiment_signal)
-            logger.info(
-                "StrategyAgent  %s %s  action=%s  direction=%s  RR=%.1f",
-                snap.symbol, snap.timeframe,
-                proposal.action.value, proposal.direction.value,
-                proposal.reward_risk_ratio,
-            )
-
-            # Strategy gate
-            if proposal.action.value != "buy":
-                funnel.killed_strategy_skip += 1
-                continue
-
-            # Volume confirmation gate
-            if quant_signal.trend_regime in _VOLUME_CONFIRM_REGIMES:
-                vol_ratio = snap.indicators.volume_ratio
-                if vol_ratio is not None and vol_ratio < _MIN_VOLUME_RATIO:
-                    logger.info(
-                        "Volume gate SKIP  %s %s  vol_ratio=%.2f < %.1f — "
-                        "no buyer confirmation in downtrend",
-                        snap.symbol, snap.timeframe, vol_ratio, _MIN_VOLUME_RATIO,
-                    )
-                    funnel.killed_volume_gate += 1
-                    continue
-
-            # Class-leader relative strength gate (generalized from BTC RS)
-            class_leader = universe.class_leader_for(snap.symbol)
-            if (
-                class_leader
-                and snap.symbol != class_leader
-                and class_leader in leader_pct_changes
-                and sentiment_signal.bias.value in ("fear", "extreme_fear")
-                and len(snap.recent_closes) >= 2
-            ):
-                alt_oldest = snap.recent_closes[-1]
-                if alt_oldest > 0:
-                    alt_pct = (snap.recent_closes[0] - alt_oldest) / alt_oldest
-                    leader_pct = leader_pct_changes[class_leader]
-                    if alt_pct < leader_pct:
-                        logger.info(
-                            "RS gate SKIP  %s  asset=%.1f%% < leader(%s)=%.1f%% — "
-                            "underperforming class leader in fear market",
-                            snap.symbol, alt_pct * 100,
-                            class_leader, leader_pct * 100,
-                        )
-                        funnel.killed_rs_gate += 1
-                        continue
-
-            # Use deterministic trend_score; fall back to LLM confidence
-            score = snap.indicators.trend_score
-            if score is None:
-                score = quant_signal.confidence
-            proposals.append((proposal, score))
-
-            # Track if class leader got a buy proposal
-            if snap.symbol in leader_approved:
-                leader_approved[snap.symbol] = True
-
+            if proposal.action.value == "buy":
+                buy_proposals.append(proposal)
+                funnel.trade_analyst_buy += 1
+                logger.info(
+                    "TradeAnalyst BUY  %s  conf=%.2f  entry=%.4f–%.4f  "
+                    "SL=%.4f  TP=%.4f",
+                    proposal.symbol, proposal.confidence,
+                    proposal.entry_zone_low, proposal.entry_zone_high,
+                    proposal.stop_loss, proposal.take_profit,
+                )
+            else:
+                funnel.trade_analyst_skip += 1
+                logger.info(
+                    "TradeAnalyst SKIP  %s  conf=%.2f  reason=%s",
+                    proposal.symbol, proposal.confidence,
+                    proposal.rationale[:100],
+                )
         except Exception:
             logger.exception(
-                "Agent pipeline failed for %s %s — skipping",
-                snap.symbol, snap.timeframe,
+                "TradeAnalyst failed for %s — skipping", snap.symbol,
             )
+            funnel.trade_analyst_error += 1
 
-    funnel.proposals_generated = len(proposals)
+    logger.info(
+        "TradeAnalyst done  buy=%d  skip=%d  error=%d",
+        funnel.trade_analyst_buy, funnel.trade_analyst_skip,
+        funnel.trade_analyst_error,
+    )
 
-    if not proposals:
-        logger.warning("No proposals generated — all assets failed or were empty")
+    # ── 7. Python validation ────────────────────────────────────────
+    logger.info("Step 7/9: Validating %d BUY proposals", len(buy_proposals))
+    valid_proposals: list[TradeProposal] = []
+    validated_rr: dict[str, float] = {}
 
-    # ── 5. RiskAgent — filter + conviction tiers ────────────────────
-    logger.info("Step 5/6: Running RiskAgent on %d proposals", len(proposals))
-    risk_agent = RiskAgent()
-    entries = risk_agent.run(proposals) if proposals else []
+    for proposal in buy_proposals:
+        result = validate_proposal(proposal)
+        if result.valid:
+            valid_proposals.append(proposal)
+            validated_rr[proposal.symbol] = result.reward_risk_ratio
+            funnel.validation_passed += 1
+        else:
+            funnel.validation_failed += 1
+            logger.info("Validation FAIL  %s", result.reason)
+
+    logger.info(
+        "Validation done  passed=%d  failed=%d",
+        funnel.validation_passed, funnel.validation_failed,
+    )
+
+    if not valid_proposals:
+        logger.warning("No valid proposals after validation")
+        _finalize_pipeline(
+            [], funnel, today, sentiment_snapshot, dry_run, universe,
+            macro_regime=macro_signal.regime.value,
+        )
+        return []
+
+    # ── 8. RiskReviewer ─────────────────────────────────────────────
+    logger.info("Step 8/9: Running RiskReviewer on %d valid proposals", len(valid_proposals))
+    risk_reviewer = RiskReviewer()
+
+    # Get open signals for portfolio context
+    open_signals: list[dict] = []
+    if not dry_run:
+        try:
+            with SignalLogger() as sl:
+                open_signals = sl.get_active_signals()
+        except Exception:
+            logger.warning("Could not fetch open signals for portfolio context")
+
+    reviewed = risk_reviewer.run(valid_proposals, macro_signal, open_signals)
+
+    # ── Build PlaybookEntries from proposals + reviews ──────────────
+    entries: list[PlaybookEntry] = []
+    proposal_map = {p.symbol: p for p in valid_proposals}
+
+    for review in reviewed:
+        proposal = proposal_map.get(review.symbol)
+        if not proposal:
+            continue
+
+        verdict = (
+            PlaybookVerdict.APPROVED
+            if review.verdict == ReviewVerdict.APPROVE
+            else PlaybookVerdict.REJECTED
+        )
+
+        # Conviction → risk pct mapping
+        risk_pct = 0.02 if review.conviction == ConvictionTier.HIGH else 0.01
+
+        rr = validated_rr[review.symbol]  # must exist — only validated proposals reach here
+
+        entry = PlaybookEntry(
+            symbol=proposal.symbol,
+            timeframe=proposal.timeframe,
+            report_date=today,
+            verdict=verdict,
+            verdict_reasoning=review.reasoning,
+            direction=proposal.direction,
+            entry_zone_low=proposal.entry_zone_low,
+            entry_zone_high=proposal.entry_zone_high,
+            stop_loss=proposal.stop_loss,
+            take_profit=proposal.take_profit,
+            reward_risk_ratio=rr,
+            confidence_score=proposal.confidence,
+            conviction=review.conviction,
+            suggested_risk_pct=risk_pct,
+            rationale=proposal.rationale,
+            risk_notes=review.risk_notes,
+            rank=1,  # will be re-ranked below
+        )
+        entries.append(entry)
 
     approved = [e for e in entries if e.verdict == PlaybookVerdict.APPROVED]
     rejected = [e for e in entries if e.verdict != PlaybookVerdict.APPROVED]
+    funnel.reviewer_approved = len(approved)
+    funnel.reviewer_rejected = len(rejected)
+
     logger.info(
-        "RiskAgent done  total=%d  approved=%d  rejected=%d",
-        len(entries),
-        len(approved),
-        len(rejected),
+        "RiskReviewer done  approved=%d  rejected=%d",
+        len(approved), len(rejected),
     )
 
-    # Count RiskAgent rejection reasons for funnel
-    for e in rejected:
-        reason = e.verdict_reasoning.lower()
-        if "r:r" in reason or "below minimum" in reason and "confidence" not in reason:
-            funnel.killed_rr_gate += 1
-        elif "confidence" in reason:
-            funnel.killed_confidence_gate += 1
-
-    # ── 5b. Class-leader correlation guard ──────────────────────────
-    # If a class leader was rejected, cap that class's signals.
-    max_per_class = universe.max_per_asset_class
-    pre_corr_count = len(approved)
-
-    for leader_sym, was_approved in leader_approved.items():
-        if was_approved:
-            continue
-        # This class leader failed — cap signals from its class
-        ac = universe.asset_class_for(leader_sym)
-        if ac is None:
-            continue
-        class_signals = [e for e in approved if universe.asset_class_for(e.symbol) == ac]
-        if len(class_signals) > max_per_class:
-            # Keep top N by confidence
-            class_signals.sort(key=lambda e: e.confidence_score, reverse=True)
-            keep = {e.symbol for e in class_signals[:max_per_class]}
-            approved = [
-                e for e in approved
-                if universe.asset_class_for(e.symbol) != ac or e.symbol in keep
-            ]
-            logger.info(
-                "Class-leader guard: %s not approved — capped %s signals to %d",
-                leader_sym, ac, max_per_class,
-            )
-
-    funnel.killed_leader_corr_gate = pre_corr_count - len(approved)
-
-    # ── 5c. Sector diversity cap ──────────────────────────────────────
-    sector_map = universe.sector_map()
-    max_per_sector = universe.max_per_sector
-
-    if sector_map and len(approved) > 1:
-        pre_sector_count = len(approved)
-        approved.sort(key=lambda e: e.confidence_score, reverse=True)
-        seen_sectors: dict[str, int] = {}
-        sector_filtered: list[PlaybookEntry] = []
-        for entry in approved:
-            sector = sector_map.get(entry.symbol, entry.symbol)
-            count = seen_sectors.get(sector, 0)
-            if count < max_per_sector:
-                sector_filtered.append(entry)
-                seen_sectors[sector] = count + 1
-            else:
-                logger.info(
-                    "Sector cap SKIP  %s  sector=%s — already have %d from this sector",
-                    entry.symbol, sector, max_per_sector,
-                )
-        approved = sector_filtered
-        funnel.killed_sector_cap = pre_sector_count - len(approved)
-
-    # ── 5d. Signal cap — publish top N by confidence ──────────────────
-    max_signals = risk_profile.get("max_daily_signals", 5)
-    pre_cap_count = len(approved)
+    # ── Signal cap — publish top N by confidence ──────────────────
+    max_signals = risk_profile.get("max_daily_signals", 3)
     if len(approved) > max_signals:
         approved.sort(key=lambda e: e.confidence_score, reverse=True)
+        funnel.signal_cap_killed = len(approved) - max_signals
         approved = approved[:max_signals]
         logger.info(
             "Signal cap: kept top %d, dropped %d",
-            max_signals, pre_cap_count - len(approved),
+            max_signals, funnel.signal_cap_killed,
         )
-    funnel.killed_signal_cap = pre_cap_count - len(approved)
 
-    funnel.approved = len(approved)
-
-    # Re-rank after all filtering (1 = highest confidence)
+    # Re-rank (1 = highest confidence)
+    approved.sort(key=lambda e: e.confidence_score, reverse=True)
     for i, entry in enumerate(approved, 1):
         approved[i - 1] = entry.model_copy(update={"rank": i})
 
-    # ── 6. Persist + notify ─────────────────────────────────────────
-    logger.info("Step 6/6: Logging signals and posting to Discord")
+    # ── 9. Persist + notify ───────────────────────────────────────
+    _finalize_pipeline(
+        approved, funnel, today, sentiment_snapshot, dry_run, universe,
+        macro_regime=macro_signal.regime.value,
+    )
 
-    # Log funnel summary
-    funnel_header = f"Pipeline Funnel — {today}"
-    logger.info("%s\n%s", funnel_header, "\n".join(funnel.summary_lines()))
+    logger.info("=== Pipeline complete ===")
+    return approved
+
+
+def _finalize_pipeline(
+    approved: list[PlaybookEntry],
+    funnel: FunnelTracker,
+    today: str,
+    sentiment_snapshot: object,
+    dry_run: bool,
+    universe: Universe,
+    macro_regime: str | None = None,
+) -> None:
+    """Log funnel, persist signals, post to Discord."""
+    logger.info("Step 9/9: Logging signals and posting to Discord")
 
     if dry_run:
+        funnel.published = len(approved)
+        funnel_header = f"Pipeline Funnel — {today}"
+        logger.info("%s\n%s", funnel_header, "\n".join(funnel.summary_lines()))
         logger.info("DRY RUN — skipping SQLite + Discord")
         for e in approved:
             logger.info(
@@ -474,7 +502,7 @@ def run_pipeline(
                 e.conviction.upper(), e.reward_risk_ratio,
                 e.suggested_risk_pct * 100,
             )
-        return entries
+        return
 
     # Log to SQLite
     trace_id = None
@@ -497,19 +525,25 @@ def run_pipeline(
                 new_signals.append(entry)
             else:
                 logger.info(
-                    "Signal %s %s already exists — skipping Discord post",
+                    "Signal %s %s already exists — skipping",
                     entry.symbol, entry.report_date,
                 )
 
         funnel.published = len(new_signals)
 
         # Log funnel to pipeline_runs table
-        fg_val = sentiment_snapshot.fear_greed_value if sentiment_snapshot else None
-        signal_logger.log_pipeline_run(today, funnel, fear_greed_value=fg_val)
+        fg_val = getattr(sentiment_snapshot, "fear_greed_value", None)
+        signal_logger.log_pipeline_run(
+            today, funnel, fear_greed_value=fg_val, macro_regime=macro_regime,
+        )
 
         open_count = signal_logger.open_signal_count()
 
-    # Post to Discord — only new signals (not duplicates from re-runs)
+    # Log funnel summary (after DB logging so published count is accurate)
+    funnel_header = f"Pipeline Funnel — {today}"
+    logger.info("%s\n%s", funnel_header, "\n".join(funnel.summary_lines()))
+
+    # Post to Discord
     notifier = DiscordNotifier()
     if new_signals:
         posted = notifier.post(new_signals, open_count=open_count, report_date=today)
@@ -518,16 +552,11 @@ def run_pipeline(
                 "Discord embed posted  signals=%d  open=%d",
                 len(new_signals), open_count,
             )
-        else:
-            logger.warning("Discord post failed or webhook not configured")
     else:
-        logger.info("No new signals to post (all duplicates or zero approved)")
+        logger.info("No new signals to post")
 
-    # Post funnel summary to Discord (every run, including zero-signal days)
+    # Post funnel summary to Discord
     notifier.post_funnel(today, funnel)
-
-    logger.info("=== Pipeline complete ===")
-    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -604,8 +633,7 @@ def main(argv: list[str] | None = None) -> None:
                 logger.exception("Failed to post error alert to Discord")
         sys.exit(1)
 
-    approved = [e for e in entries if e.verdict == PlaybookVerdict.APPROVED]
-    print(f"\nDone. {len(approved)} approved signals from {len(entries)} total entries.")
+    print(f"\nDone. {len(entries)} approved signals.")
 
 
 if __name__ == "__main__":

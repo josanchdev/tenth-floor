@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" width="800" height="500">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#7c3aed" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="500" rx="16" fill="#0a0a0f"/>
+  <rect width="800" height="500" rx="16" fill="url(#glow)"/>
+
+  <!-- Top accent line -->
+  <rect x="0" y="0" width="800" height="3" rx="2" fill="#a855f7" opacity="0.6"/>
+
+  <!-- Title -->
+  <text x="60" y="65" font-family="system-ui, -apple-system, sans-serif" font-size="15" fill="#a855f7" font-weight="500" letter-spacing="3">PIPELINE FUNNEL</text>
+  <text x="60" y="100" font-family="system-ui, -apple-system, sans-serif" font-size="28" fill="#ffffff" font-weight="700">March 28, 2026</text>
+
+  <!-- Divider -->
+  <line x1="60" y1="125" x2="740" y2="125" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1"/>
+
+  <!-- Rows -->
+  <!-- Row 1: Pairs scanned -->
+  <text x="60" y="175" font-family="system-ui, -apple-system, monospace" font-size="18" fill="#a0a0a0">Pairs scanned</text>
+  <text x="740" y="175" font-family="system-ui, -apple-system, monospace" font-size="22" fill="#ffffff" font-weight="700" text-anchor="end">26</text>
+  <line x1="60" y1="195" x2="740" y2="195" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Row 2: Killed at trend -->
+  <text x="60" y="235" font-family="system-ui, -apple-system, monospace" font-size="18" fill="#a0a0a0">Killed at trend gate</text>
+  <text x="740" y="235" font-family="system-ui, -apple-system, monospace" font-size="22" fill="#ef4444" font-weight="700" text-anchor="end">-21</text>
+  <line x1="60" y1="255" x2="740" y2="255" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Row 3: Killed at strategy -->
+  <text x="60" y="295" font-family="system-ui, -apple-system, monospace" font-size="18" fill="#a0a0a0">Killed at strategy</text>
+  <text x="740" y="295" font-family="system-ui, -apple-system, monospace" font-size="22" fill="#ef4444" font-weight="700" text-anchor="end">-4</text>
+  <line x1="60" y1="315" x2="740" y2="315" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Row 4: Killed at volume -->
+  <text x="60" y="355" font-family="system-ui, -apple-system, monospace" font-size="18" fill="#a0a0a0">Killed at volume</text>
+  <text x="740" y="355" font-family="system-ui, -apple-system, monospace" font-size="22" fill="#ef4444" font-weight="700" text-anchor="end">-1</text>
+  <line x1="60" y1="375" x2="740" y2="375" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>
+
+  <!-- Row 5: Approved — the punchline -->
+  <rect x="40" y="395" width="720" height="50" rx="8" fill="#ffffff" fill-opacity="0.04"/>
+  <text x="60" y="427" font-family="system-ui, -apple-system, monospace" font-size="20" fill="#ffffff" font-weight="700">Approved</text>
+  <text x="740" y="427" font-family="system-ui, -apple-system, monospace" font-size="28" fill="#ffffff" font-weight="700" text-anchor="end">0</text>
+
+  <!-- Bottom branding -->
+  <text x="740" y="480" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#a855f7" text-anchor="end" opacity="0.5">The Tenth Floor</text>
+</svg>

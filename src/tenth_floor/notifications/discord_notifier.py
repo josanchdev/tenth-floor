@@ -112,12 +112,18 @@ class DiscordNotifier:
     def _signal_field(entry: PlaybookEntry) -> dict:
         """Format one approved signal as a Discord embed field."""
         risk_pct = entry.suggested_risk_pct * 100
+        rationale = entry.rationale
+        if len(rationale) > 500:
+            rationale = rationale[:500]
         value = (
             f"Entry: {entry.entry_zone_low} \u2013 {entry.entry_zone_high}\n"
             f"Stop: {entry.stop_loss}  |  Target: {entry.take_profit}\n"
             f"R:R: {entry.reward_risk_ratio}  \u00b7  Risk: {risk_pct:.0f}%\n"
-            f"Rationale: {entry.strategy_rationale}"
+            f"Rationale: {rationale}"
         )
+        # Discord embed field value limit is 1024 chars
+        if len(value) > 1024:
+            value = value[:1021] + "..."
         return {
             "name": f"{entry.symbol} {entry.timeframe.upper()} \u00b7 {entry.direction.value.upper()} \u00b7 {entry.conviction.upper()}",
             "value": value,

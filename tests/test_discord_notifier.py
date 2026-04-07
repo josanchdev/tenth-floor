@@ -10,7 +10,6 @@ import requests
 from tenth_floor.data.models import (
     PlaybookEntry,
     PlaybookVerdict,
-    SetupAction,
     SignalDirection,
 )
 from tenth_floor.notifications.discord_notifier import (
@@ -34,7 +33,6 @@ def _make_entry(**overrides) -> PlaybookEntry:
         "verdict": PlaybookVerdict.APPROVED,
         "verdict_reasoning": "All criteria met",
         "direction": SignalDirection.LONG,
-        "action": SetupAction.BUY,
         "entry_zone_low": 62_000.0,
         "entry_zone_high": 63_000.0,
         "stop_loss": 60_500.0,
@@ -43,9 +41,7 @@ def _make_entry(**overrides) -> PlaybookEntry:
         "confidence_score": 0.82,
         "conviction": "high",
         "suggested_risk_pct": 0.02,
-        "quant_summary": "Strong uptrend",
-        "sentiment_summary": "Greed phase",
-        "strategy_rationale": "EMA golden cross + RSI bounce",
+        "rationale": "EMA golden cross + RSI bounce",
         "rank": 1,
     }
     defaults.update(overrides)

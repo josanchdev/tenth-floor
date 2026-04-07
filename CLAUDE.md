@@ -52,23 +52,7 @@ streamlit run src/tenth_floor/dashboard/app.py
 
 V4 is expanding from crypto-only to a multi-asset universe (~36 assets: crypto, US equities, ETFs, commodities) AND shifting to an AI-first architecture where the LLM makes trading decisions and Python validates. See [ROADMAP.md](ROADMAP.md) for the full plan.
 
-### Pipeline Flow — Current (V3/Phase 1, being replaced in Phase 1.5)
-
-```
-Data sources (ccxt/yfinance) ──→ TACalculator ──→ SnapshotBuilder ──→ PairSnapshot
-Sentiment (F&G, RSS)         ──────────────────────────────────────↗
-
-PairSnapshot ──→ QuantAgent (trend + confidence)
-              ──→ StrategyAgent (LONG proposal or SKIP, with entry/SL/TP)
-SentimentSnapshot ──→ SentimentAgent (macro bias — runs once, shared)
-
-All proposals ──→ 7 filtering gates ──→ RiskAgent (conviction tiers) ──→ PlaybookEntry[]
-                                                                          │
-                                                        ┌─────────────────┴──────────────┐
-                                                   SignalLogger (SQLite)        DiscordNotifier (webhook)
-```
-
-### Pipeline Flow — Target (Phase 1.5: AI-First)
+### Pipeline Flow (Phase 1.5: AI-First)
 
 ```
 Data (ccxt/yfinance) ──→ TACalculator ──→ Indicators + Structural Levels
@@ -104,7 +88,9 @@ All agents use `agents/base.py`:
 - `clean_json_response()` — strips Qwen3 `<think>` blocks and markdown fences
 - LLM tracing via `langfuse.openai.OpenAI` wrapper (auto-instruments every call)
 
-Phase 1.5 replaces the V3 agents (QuantAgent, StrategyAgent, SentimentAgent, RiskAgent) with MacroAnalyst, TradeAnalyst, and RiskReviewer. The LLM makes all trading decisions; Python validates output for sanity.
+Three agents: MacroAnalyst (macro regime), TradeAnalyst (per-asset BUY/SKIP with LLM-chosen levels), RiskReviewer (portfolio-level approval + conviction). The LLM makes all trading decisions; Python validates output for sanity.
+
+**Prompt philosophy:** Minimal prompts — role + context + output format only. No prescriptive trading rules, no "when to skip" checklists, no fixed confluence/risk factor lists. The LLM reasons freely using its own domain knowledge. Python's validation layer catches bad math. This approach scales better as models improve.
 
 ### Config
 
@@ -123,7 +109,7 @@ Path resolution: `config.py` walks up from CWD looking for `pyproject.toml`. Ove
 
 ### Typed Contracts
 
-`data/models.py` defines every inter-module boundary as a frozen Pydantic v2 model. The layers are: Data (`OHLCVBar`, `SentimentSnapshot`) → Features (`TAIndicators`, `PairSnapshot`) → Agent outputs (`QuantSignal`, `SentimentSignal`, `SetupProposal`, `PlaybookEntry`). No free-form numeric fields in agent outputs.
+`data/models.py` defines every inter-module boundary as a frozen Pydantic v2 model. The layers are: Data (`OHLCVBar`, `SentimentSnapshot`) → Features (`TAIndicators`, `PairSnapshot`) → Agent outputs (`MacroSignal`, `TradeProposal`, `ReviewedSignal`, `PlaybookEntry`). No free-form numeric fields in agent outputs.
 
 ### Signal Lifecycle
 
@@ -140,6 +126,11 @@ Resolved by `check_outcomes.py` via 4h candle walk. SL wins on same-candle ambig
 
 V3 is complete. V2 is complete.
 
-**V4 Phase 1 (complete):** Multi-asset foundation — universe restructuring, YFinanceDataFetcher, class-leader gates, honest R:R, multi-source outcome checker. All 176 tests pass.
+**V4 Phase 1 (complete):** Multi-asset foundation — universe restructuring, YFinanceDataFetcher, class-leader gates, honest R:R, multi-source outcome checker.
 
-**V4 Phase 1.5 (next):** AI-first signal generation — replace QuantAgent + StrategyAgent with TradeAnalyst (LLM picks entry/SL/TP), replace SentimentAgent with MacroAnalyst, replace RiskAgent with RiskReviewer (portfolio-level LLM reasoning), delete mechanical gates, add Python validation layer.
+**V4 Phase 1.5 (complete — 2026-04-07):** AI-first signal generation — MacroAnalyst (macro regime), TradeAnalyst (LLM picks entry/SL/TP), RiskReviewer (portfolio-level LLM reasoning), Python validation layer. Minimal prompts (role + output format only, no prescriptive rules). All V3 agents and mechanical gates deleted. Verified end-to-end with live market data. 176 tests pass.
+
+**V4 Phase 2 (next):** Signal quality — the only thing that matters until launch.
+- **2A: Infrastructure** — Docker Compose (5090 deployment), hardware profiles, per-proposal RiskReviewer (replace batch), TradeAnalyst prompt refinement, macro-aware ranking, model evaluation (Qwen 3.5).
+- **2B: Context Enrichment** — RSS feeds (8 sources), 10Y yield via FRED, earnings calendar, asset-specific news injection. Requires 5090 token budget.
+- **2C: Equities-Specific** — Conditional entry zones, two-pass scheduling, market calendar in outcome checker.
