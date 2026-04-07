@@ -193,16 +193,16 @@ class TestTradeAnalyst:
     def test_short_override_to_skip(
         self, sample_snapshot: PairSnapshot, sample_macro: MacroSignal,
     ) -> None:
-        """If LLM returns SHORT, TradeAnalyst must override to SKIP."""
+        """If LLM returns SHORT direction, TradeAnalyst must override to SKIP."""
         mock_response = json.dumps({
             "symbol": "BTCUSDT",
             "timeframe": "1d",
-            "action": "sell",
+            "action": "buy",
             "direction": "short",
             "entry_zone_low": 62000.0,
             "entry_zone_high": 62500.0,
-            "stop_loss": 63000.0,
-            "take_profit": 60000.0,
+            "stop_loss": 61000.0,
+            "take_profit": 64000.0,
             "confidence": 0.70,
             "rationale": "Bearish signal.",
             "confluence_factors": [],

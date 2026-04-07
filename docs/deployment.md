@@ -135,7 +135,7 @@ python -m tenth_floor.check_outcomes --dry-run
 ```
 PENDING ──▶ OPEN ──▶ HIT_TP  (target reached)
                  ──▶ HIT_SL  (stop hit)
-                 ──▶ EXPIRED (14 days crypto, 30 days equity)
+                 ──▶ EXPIRED (14 days crypto, 10 days equity/ETF/commodity)
 ```
 
 - **PENDING → OPEN**: a candle low touches the entry zone

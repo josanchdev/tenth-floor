@@ -34,11 +34,9 @@ class SignalDirection(StrEnum):
 
 
 class SetupAction(StrEnum):
-    """What kind of trade action the agent proposes."""
+    """What kind of trade action the agent proposes. Spot LONG only."""
 
     BUY = "buy"
-    SELL = "sell"
-    HOLD = "hold"
     SKIP = "skip"
 
 

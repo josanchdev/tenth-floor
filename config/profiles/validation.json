@@ -11,5 +11,5 @@
       "suggested_risk_pct": 0.01
     }
   },
-  "_comment": "4/7 indicator agreement threshold. Standard tier aligned with gate threshold so approved signals always get a conviction label."
+  "_comment": "Relaxed confidence floor for validation runs. Standard tier at 0.57 so more signals pass for quality evaluation."
 }

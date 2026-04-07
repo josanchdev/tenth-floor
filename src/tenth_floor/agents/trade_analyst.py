@@ -120,6 +120,16 @@ class TradeAnalyst:
 
         proposal = parse_json_response(raw, TradeProposal)
 
+        # SKIPs often return 0 for price fields — fill with dummy values so
+        # the model validates.  These proposals are discarded anyway.
+        if proposal.action == SetupAction.SKIP:
+            dummy_updates: dict[str, float] = {}
+            for field in ("entry_zone_low", "entry_zone_high", "stop_loss", "take_profit"):
+                if getattr(proposal, field) <= 0:
+                    dummy_updates[field] = 1.0
+            if dummy_updates:
+                proposal = proposal.model_copy(update=dummy_updates)
+
         # Override LLM symbol with authoritative snapshot symbol
         if proposal.symbol != snapshot.symbol:
             proposal = proposal.model_copy(update={"symbol": snapshot.symbol})

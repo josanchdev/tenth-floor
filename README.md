@@ -63,8 +63,8 @@ See [ROADMAP.md](ROADMAP.md) for the full V4 plan.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | Phase 1 — Foundation | Universe restructure, YFinanceDataFetcher, class-leader gates | Complete |
-| Phase 1.5 — AI-First | MacroAnalyst, TradeAnalyst, RiskReviewer, delete mechanical gates | Next |
-| Phase 2 — Macro Enrichment | RSS feeds, 10Y yield, earnings calendar, VIX/DXY deep integration | Planned |
+| Phase 1.5 — AI-First | MacroAnalyst, TradeAnalyst, RiskReviewer, delete mechanical gates | Complete |
+| Phase 2 — Signal Quality | Docker (5090), per-proposal RiskReviewer, RSS feeds, earnings calendar | Next |
 | Phase 3 — Validation | 90-day backtest, equity validation mode, signal quality metrics | Planned |
 | Phase 4 — Launch | Multi-asset Discord channels, tweet drafter, dashboard updates | Planned |
 

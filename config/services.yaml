@@ -1,4 +1,4 @@
-# External service configuration for The Tenth Floor AI (V2).
+# External service configuration for The Tenth Floor AI.
 # Secrets (API keys, webhook URLs) are loaded from environment variables – never hard-coded here.
 
 market_data:
