@@ -1,9 +1,10 @@
 """
-RiskReviewer — portfolio-level review of all trade proposals.
+RiskReviewer — per-proposal portfolio review.
 
-Sees ALL BUY proposals from TradeAnalyst at once. Makes portfolio-level
-decisions: approve/reject, conviction tiers, correlation checks, sector
-concentration. LLM-driven reasoning replaces mechanical gating.
+For each validated TradeProposal, makes ONE LLM call with full context:
+the trade thesis, the macro frame, currently open signals, and any
+proposals already approved earlier in this same review pass. The CRO
+sees the portfolio as it is being built, one decision at a time.
 
 Usage::
 
@@ -15,80 +16,80 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import logging
 
 from langfuse import observe
 
 from tenth_floor.agents.base import (
     call_llm,
-    clean_json_response,
     load_agent_config,
     load_risk_profile,
+    parse_json_response,
 )
-from tenth_floor.data.models import MacroSignal, ReviewedSignal, TradeProposal
+from tenth_floor.data.models import (
+    MacroSignal,
+    ReviewedSignal,
+    ReviewVerdict,
+    TradeProposal,
+)
 
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
-You are RiskReviewer, the chief risk officer for a premium multi-asset signal \
-provider. You review ALL of today's trade proposals as a portfolio, not \
-individually.
+You are RiskReviewer, the chief risk officer for a premium multi-asset \
+signal provider. Your job is to defend the portfolio and the firm's \
+reputation. You decide whether each individual trade proposal deserves to \
+be published to paying subscribers today.
 
-You receive:
-1. All BUY proposals from TradeAnalyst (with full reasoning and price levels)
-2. The macro environment assessment
+You receive ONE proposal at a time, but with full context:
+1. The trade thesis from TradeAnalyst (entry, SL, TP, full reasoning)
+2. The macro environment from MacroAnalyst
 3. Currently open signals in the portfolio
+4. Proposals already APPROVED earlier in today's review pass
 
-YOUR ROLE:
-- Review proposals as a PORTFOLIO — not one at a time
-- Approve the strongest setups, reject the weakest
-- Assign conviction tiers based on setup quality + macro alignment
-- Flag correlation risks (two energy stocks, three crypto positions, etc.)
-- Consider total portfolio exposure in the current macro environment
+YOUR STANDARD:
+A signal is approved only if you would personally take this trade with \
+the firm's capital, given the entire portfolio context and macro frame. \
+"Good enough" is not good enough — silence is the default. A single weak \
+signal published damages subscriber trust more than ten silent days. When \
+in doubt, REJECT.
 
-CONVICTION TIERS:
-- "high": Exceptional setup — strong confluence, macro tailwind, clean structure. \
-Confidence >= 0.80 from TradeAnalyst AND your own assessment agrees. \
-Suggested risk: 2% of portfolio.
-- "standard": Good setup — solid confluence but may have minor headwinds. \
-Confidence >= 0.60 from TradeAnalyst. Suggested risk: 1% of portfolio.
+CONVICTION TIERS (only on approve):
+- "high": Exceptional setup. Strong confluence, clear macro tailwind, \
+clean structure, asymmetric R:R. You would size up on this trade.
+- "standard": Solid setup with minor headwinds or moderate confluence. \
+Worth taking at standard size.
 
 WHEN TO REJECT:
-- Weak setup that made it through TradeAnalyst (confidence < 0.60)
-- Correlated with another approved proposal (e.g. XOM + XLE both energy longs)
-- Correlated with an existing open signal
-- Macro environment strongly against this asset class
-- Too many proposals from same sector — pick the strongest, reject the rest
-- Portfolio already has significant exposure to this direction/class
+- Setup is mediocre on its own (TradeAnalyst confidence < 0.65, weak \
+confluence, R:R barely above floor)
+- Macro environment is hostile to this asset class
+- Already-approved proposal today covers the same sector or theme — \
+pick the strongest, reject the rest
+- Existing open signal in the portfolio already provides this exposure
+- Correlated with another open or approved position (e.g. two tech longs, \
+two energy plays)
+- Asset class concentration: don't pile more than 2 signals into one class
 
-PORTFOLIO RULES:
-- Max 1 signal per sector (if two energy longs, pick the better one)
-- Max 2 signals per asset class
-- Consider existing open signals — don't pile into an already-exposed sector
-- In risk-off regimes, be MORE selective (reject borderline setups)
-- In risk-on regimes, you can be slightly more permissive
+YOUR REPUTATION IS ON THE LINE. Subscribers trade real money on your \
+calls. Be the CRO who said no when it mattered.
 
-OUTPUT FORMAT (JSON array — one entry per proposal):
-[
-  {
-    "symbol": "<symbol>",
-    "verdict": "approve|reject",
-    "conviction": "high|standard",
-    "reasoning": "<2-3 sentences: why approved/rejected in portfolio context>",
-    "risk_notes": "<specific risks for this signal>"
-  }
-]
+OUTPUT FORMAT (strict JSON, single object — NOT an array):
+{
+  "symbol": "<symbol>",
+  "verdict": "approve|reject",
+  "conviction": "high|standard",
+  "reasoning": "<2-3 sentences: why approved/rejected in portfolio + macro context>",
+  "risk_notes": "<specific risks for this signal, or empty string>"
+}
 
-IMPORTANT:
-- You MUST return an entry for EVERY proposal you receive
-- Your reasoning should reference the portfolio context, not just the individual trade
-- "This is the strongest setup today because..." is better than "This has good technicals"
+Even on a reject, you MUST include a conviction field — set it to \
+"standard" by convention. Only the verdict and reasoning matter on a reject.
 """
 
 
 class RiskReviewer:
-    """Portfolio-level review of all trade proposals."""
+    """Per-proposal portfolio review with running portfolio state."""
 
     def __init__(self) -> None:
         self._config = load_agent_config("risk_reviewer")
@@ -102,7 +103,7 @@ class RiskReviewer:
         macro: MacroSignal,
         open_signals: list[dict] | None = None,
     ) -> list[ReviewedSignal]:
-        """Review all proposals and return verdicts.
+        """Review each proposal individually with running portfolio state.
 
         Parameters
         ----------
@@ -116,142 +117,139 @@ class RiskReviewer:
         Returns
         -------
         list[ReviewedSignal]
-            One verdict per proposal.
+            One verdict per proposal, in the same order as the input list.
         """
         if not proposals:
             return []
 
-        user_prompt = self._build_prompt(proposals, macro, open_signals)
+        # Process strongest setups first so the CRO sees the best ideas
+        # before the marginal ones — and so already-approved context is
+        # built from the best, not random order.
+        ordered = sorted(proposals, key=lambda p: p.confidence, reverse=True)
 
-        raw = call_llm(
-            agent_name="risk_reviewer",
-            system_prompt=_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            model=self._config.get("model", "qwen3-32b"),
-            temperature=self._config.get("temperature", 0.10),
-            max_output_tokens=self._config.get("max_output_tokens", 2048),
-            provider=self._config.get("provider", "openai"),
-            base_url=self._config.get("base_url", "http://localhost:8000/v1"),
-            timeout=self._config.get("timeout", 60.0),
-            max_retries=self._config.get("max_retries", 3),
-        )
+        approved_so_far: list[tuple[TradeProposal, ReviewedSignal]] = []
+        results_by_symbol: dict[str, ReviewedSignal] = {}
 
-        reviewed = self._parse_response(raw, proposals)
+        for i, proposal in enumerate(ordered, 1):
+            logger.info(
+                "RiskReviewer %d/%d  reviewing %s  conf=%.2f",
+                i, len(ordered), proposal.symbol, proposal.confidence,
+            )
+            review = self._review_one(proposal, macro, open_signals or [], approved_so_far)
+            results_by_symbol[proposal.symbol] = review
+            if review.verdict == ReviewVerdict.APPROVE:
+                approved_so_far.append((proposal, review))
+                logger.info(
+                    "RiskReviewer APPROVE  %s  conviction=%s",
+                    proposal.symbol, review.conviction.value,
+                )
+            else:
+                logger.info(
+                    "RiskReviewer REJECT  %s  reason=%s",
+                    proposal.symbol, review.reasoning[:100],
+                )
 
-        approved_count = sum(1 for r in reviewed if r.verdict.value == "approve")
+        # Return in the original input order so callers can map by index
+        results = [results_by_symbol[p.symbol] for p in proposals]
+
+        approved_count = sum(1 for r in results if r.verdict == ReviewVerdict.APPROVE)
         logger.info(
             "RiskReviewer done  total=%d  approved=%d  rejected=%d",
-            len(reviewed), approved_count, len(reviewed) - approved_count,
+            len(results), approved_count, len(results) - approved_count,
         )
-        return reviewed
+        return results
 
-    def _parse_response(
+    def _review_one(
         self,
-        raw: str,
-        proposals: list[TradeProposal],
-    ) -> list[ReviewedSignal]:
-        """Parse the LLM response into ReviewedSignal objects."""
-        cleaned = clean_json_response(raw)
+        proposal: TradeProposal,
+        macro: MacroSignal,
+        open_signals: list[dict],
+        approved_so_far: list[tuple[TradeProposal, ReviewedSignal]],
+    ) -> ReviewedSignal:
+        """Make one LLM call to review a single proposal."""
+        user_prompt = self._build_prompt(proposal, macro, open_signals, approved_so_far)
 
         try:
-            data = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            logger.error("Failed to parse RiskReviewer JSON: %s", exc)
-            # Fallback: approve all with standard conviction
-            return [
-                ReviewedSignal(
-                    symbol=p.symbol,
-                    verdict="approve",
-                    conviction="standard",
-                    reasoning="RiskReviewer parse error — defaulting to approve",
-                    risk_notes="",
-                )
-                for p in proposals
-            ]
+            raw = call_llm(
+                agent_name="risk_reviewer",
+                system_prompt=_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                model=self._config.get("model", "qwen3-32b"),
+                temperature=self._config.get("temperature", 0.10),
+                max_output_tokens=self._config.get("max_output_tokens", 1024),
+                provider=self._config.get("provider", "openai"),
+                base_url=self._config.get("base_url", "http://localhost:8000/v1"),
+                timeout=self._config.get("timeout", 60.0),
+                max_retries=self._config.get("max_retries", 3),
+            )
+            review = parse_json_response(raw, ReviewedSignal)
+        except Exception as exc:
+            logger.warning(
+                "RiskReviewer failed for %s: %s — defaulting to REJECT",
+                proposal.symbol, exc,
+            )
+            return ReviewedSignal(
+                symbol=proposal.symbol,
+                verdict="reject",
+                conviction="standard",
+                reasoning="RiskReviewer error — defaulted to reject for safety",
+                risk_notes="",
+            )
 
-        if isinstance(data, dict):
-            data = [data]
-        if not isinstance(data, list):
-            logger.warning("RiskReviewer returned unexpected type: %s", type(data).__name__)
-            data = []
+        # Authoritative symbol — never trust LLM symbol echoing
+        if review.symbol != proposal.symbol:
+            review = review.model_copy(update={"symbol": proposal.symbol})
 
-        # Map by symbol
-        review_map: dict[str, dict] = {}
-        for item in data:
-            if isinstance(item, dict) and "symbol" in item:
-                review_map[item["symbol"]] = item
-
-        results = []
-        for proposal in proposals:
-            item = review_map.get(proposal.symbol)
-            if item:
-                try:
-                    results.append(ReviewedSignal.model_validate(item))
-                except Exception as exc:
-                    logger.warning(
-                        "Failed to validate ReviewedSignal for %s: %s",
-                        proposal.symbol, exc,
-                    )
-                    results.append(ReviewedSignal(
-                        symbol=proposal.symbol,
-                        verdict="approve",
-                        conviction="standard",
-                        reasoning="Validation error — defaulting to approve",
-                        risk_notes="",
-                    ))
-            else:
-                # LLM didn't return a verdict for this symbol — default approve
-                logger.warning("RiskReviewer missing verdict for %s", proposal.symbol)
-                results.append(ReviewedSignal(
-                    symbol=proposal.symbol,
-                    verdict="approve",
-                    conviction="standard",
-                    reasoning="No RiskReviewer verdict — defaulting to approve",
-                    risk_notes="",
-                ))
-
-        return results
+        return review
 
     @staticmethod
     def _build_prompt(
-        proposals: list[TradeProposal],
+        proposal: TradeProposal,
         macro: MacroSignal,
-        open_signals: list[dict] | None,
+        open_signals: list[dict],
+        approved_so_far: list[tuple[TradeProposal, ReviewedSignal]],
     ) -> str:
-        """Build the user prompt with all proposals and context."""
-        # Macro context
+        """Build the per-proposal user prompt with full portfolio context."""
+        # Macro frame
         macro_section = (
             f"MACRO REGIME: {macro.regime.value}\n"
             f"{macro.regime_reasoning}\n"
             f"VIX: {macro.vix_level or 'N/A'}  |  "
             f"F&G: {macro.fear_greed_value}  |  "
             f"DXY: {macro.dxy_trend}\n"
+            "Per-asset-class outlook:\n"
         )
         for impact in macro.asset_class_impacts:
             macro_section += (
                 f"  - {impact.asset_class}: {impact.outlook} — {impact.reasoning}\n"
             )
 
-        # Proposals — compact format to fit token budget.
-        # RiskReviewer needs: symbol, levels, R:R, confidence, and a short
-        # rationale summary for portfolio-level correlation/concentration checks.
-        proposals_section = ""
-        for i, p in enumerate(proposals, 1):
-            entry_mid = (p.entry_zone_low + p.entry_zone_high) / 2
-            risk = entry_mid - p.stop_loss
-            reward = p.take_profit - entry_mid
-            rr = round(reward / risk, 2) if risk > 0 else 0
-            # Truncate rationale to first sentence for token efficiency
-            short_rationale = p.rationale.split(". ")[0] + "."
-            proposals_section += (
-                f"\n{i}. {p.symbol}  conf={p.confidence:.2f}  "
-                f"entry={p.entry_zone_low}–{p.entry_zone_high}  "
-                f"SL={p.stop_loss}  TP={p.take_profit}  R:R={rr}\n"
-                f"   {short_rationale}\n"
-            )
+        # The proposal under review — full thesis, not compressed
+        entry_mid = (proposal.entry_zone_low + proposal.entry_zone_high) / 2
+        risk = entry_mid - proposal.stop_loss
+        reward = proposal.take_profit - entry_mid
+        rr = round(reward / risk, 2) if risk > 0 else 0
 
-        # Open signals (portfolio state)
-        open_section = "CURRENTLY OPEN SIGNALS: None\n"
+        confluence = "\n".join(f"    - {f}" for f in proposal.confluence_factors) or "    (none provided)"
+        risks = "\n".join(f"    - {f}" for f in proposal.risk_factors) or "    (none provided)"
+
+        proposal_section = (
+            f"PROPOSAL UNDER REVIEW:\n"
+            f"  Symbol: {proposal.symbol}  ({proposal.timeframe})\n"
+            f"  TradeAnalyst confidence: {proposal.confidence:.2f}\n"
+            f"  Entry zone: {proposal.entry_zone_low} – {proposal.entry_zone_high}\n"
+            f"  Stop-loss: {proposal.stop_loss}\n"
+            f"  Take-profit: {proposal.take_profit}\n"
+            f"  Reward:Risk: {rr}\n"
+            f"\n  Trade thesis:\n  {proposal.rationale}\n"
+            f"\n  Entry reasoning: {proposal.entry_reasoning}\n"
+            f"  Stop reasoning: {proposal.stop_reasoning}\n"
+            f"  Target reasoning: {proposal.target_reasoning}\n"
+            f"\n  Confluence factors:\n{confluence}\n"
+            f"\n  Risk factors:\n{risks}\n"
+        )
+
+        # Open signals
         if open_signals:
             open_section = f"CURRENTLY OPEN SIGNALS ({len(open_signals)}):\n"
             for sig in open_signals:
@@ -260,18 +258,35 @@ class RiskReviewer:
                     f"({sig.get('status', '?')}) — "
                     f"conviction: {sig.get('conviction', '?')}\n"
                 )
+        else:
+            open_section = "CURRENTLY OPEN SIGNALS: None\n"
+
+        # Already approved earlier in THIS review pass
+        if approved_so_far:
+            approved_section = (
+                f"ALREADY APPROVED IN TODAY'S REVIEW ({len(approved_so_far)}):\n"
+            )
+            for prop, rev in approved_so_far:
+                approved_section += (
+                    f"  - {prop.symbol}  conviction={rev.conviction.value}  "
+                    f"conf={prop.confidence:.2f}\n"
+                    f"    {rev.reasoning}\n"
+                )
+        else:
+            approved_section = "ALREADY APPROVED IN TODAY'S REVIEW: None\n"
 
         return f"""\
-Review all of today's trade proposals as a portfolio.
+Review the following trade proposal in full portfolio context.
 
 {macro_section}
 
 {open_section}
 
-TODAY'S PROPOSALS ({len(proposals)}):
-{proposals_section}
+{approved_section}
 
-For each proposal, decide: APPROVE or REJECT? What conviction tier?
-Consider correlations, sector concentration, and macro alignment.
-Return a JSON array with one entry per proposal.
+{proposal_section}
+
+Decide: APPROVE or REJECT? If approve, what conviction tier?
+Consider correlations with open and already-approved positions, sector and \
+asset-class concentration, and macro alignment. Return a single JSON object.
 """

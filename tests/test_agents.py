@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -266,13 +266,13 @@ class TestRiskReviewer:
     def test_run_returns_reviewed_signals(
         self, sample_proposal: TradeProposal, sample_macro: MacroSignal,
     ) -> None:
-        mock_response = json.dumps([{
+        mock_response = json.dumps({
             "symbol": "BTCUSDT",
             "verdict": "approve",
             "conviction": "high",
             "reasoning": "Strongest setup today.",
             "risk_notes": "Watch overhead resistance.",
-        }])
+        })
 
         with patch("tenth_floor.agents.risk_reviewer.call_llm", return_value=mock_response):
             from tenth_floor.agents.risk_reviewer import RiskReviewer
@@ -287,13 +287,13 @@ class TestRiskReviewer:
     def test_reject_verdict(
         self, sample_proposal: TradeProposal, sample_macro: MacroSignal,
     ) -> None:
-        mock_response = json.dumps([{
+        mock_response = json.dumps({
             "symbol": "BTCUSDT",
             "verdict": "reject",
             "conviction": "standard",
             "reasoning": "Macro headwind, risk-off regime.",
             "risk_notes": "VIX elevated.",
-        }])
+        })
 
         with patch("tenth_floor.agents.risk_reviewer.call_llm", return_value=mock_response):
             from tenth_floor.agents.risk_reviewer import RiskReviewer
@@ -309,30 +309,30 @@ class TestRiskReviewer:
             reviewer = RiskReviewer()
         assert reviewer.run([], sample_macro) == []
 
-    def test_parse_error_defaults_to_approve(
+    def test_parse_error_defaults_to_reject(
         self, sample_proposal: TradeProposal, sample_macro: MacroSignal,
     ) -> None:
-        """If LLM response is unparseable, default to approve with standard conviction."""
+        """If LLM response is unparseable, default to REJECT for safety."""
         with patch("tenth_floor.agents.risk_reviewer.call_llm", return_value="not json"):
             from tenth_floor.agents.risk_reviewer import RiskReviewer
             reviewer = RiskReviewer()
             reviewed = reviewer.run([sample_proposal], sample_macro)
 
         assert len(reviewed) == 1
-        assert reviewed[0].verdict == ReviewVerdict.APPROVE
+        assert reviewed[0].verdict == ReviewVerdict.REJECT
         assert reviewed[0].conviction == "standard"
 
-    def test_missing_symbol_defaults_to_approve(
+    def test_wrong_symbol_is_overridden(
         self, sample_proposal: TradeProposal, sample_macro: MacroSignal,
     ) -> None:
-        """If LLM doesn't return a verdict for a symbol, default to approve."""
-        mock_response = json.dumps([{
+        """LLM symbol echo is never trusted — proposal symbol always wins."""
+        mock_response = json.dumps({
             "symbol": "ETHUSDT",
             "verdict": "approve",
             "conviction": "high",
-            "reasoning": "Wrong symbol.",
+            "reasoning": "Wrong symbol echoed.",
             "risk_notes": "",
-        }])
+        })
 
         with patch("tenth_floor.agents.risk_reviewer.call_llm", return_value=mock_response):
             from tenth_floor.agents.risk_reviewer import RiskReviewer
@@ -342,6 +342,36 @@ class TestRiskReviewer:
         assert len(reviewed) == 1
         assert reviewed[0].symbol == "BTCUSDT"
         assert reviewed[0].verdict == ReviewVerdict.APPROVE
+
+    def test_per_proposal_loop_calls_llm_per_proposal(
+        self, sample_proposal: TradeProposal, sample_macro: MacroSignal,
+    ) -> None:
+        """N proposals → N LLM calls. Each call is independent."""
+        # Two proposals, second is a copy with a different symbol
+        second = sample_proposal.model_copy(update={"symbol": "ETHUSDT"})
+        proposals = [sample_proposal, second]
+
+        responses = [
+            json.dumps({
+                "symbol": "BTCUSDT", "verdict": "approve", "conviction": "high",
+                "reasoning": "Top pick.", "risk_notes": "",
+            }),
+            json.dumps({
+                "symbol": "ETHUSDT", "verdict": "reject", "conviction": "standard",
+                "reasoning": "Already exposed via BTC.", "risk_notes": "",
+            }),
+        ]
+        mock = MagicMock(side_effect=responses)
+        with patch("tenth_floor.agents.risk_reviewer.call_llm", mock):
+            from tenth_floor.agents.risk_reviewer import RiskReviewer
+            reviewer = RiskReviewer()
+            reviewed = reviewer.run(proposals, sample_macro)
+
+        assert mock.call_count == 2
+        # Returned in input order
+        assert [r.symbol for r in reviewed] == ["BTCUSDT", "ETHUSDT"]
+        assert reviewed[0].verdict == ReviewVerdict.APPROVE
+        assert reviewed[1].verdict == ReviewVerdict.REJECT
 
 
 # ---------------------------------------------------------------------------

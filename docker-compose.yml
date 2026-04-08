@@ -1,0 +1,63 @@
+services:
+
+  # ─── vLLM inference server ───────────────────────────────────────────────────
+  # Starts once, serves the model, tears down automatically when pipeline exits.
+  # Model weights are cached in a named volume — only downloaded on first run.
+  vllm:
+    image: vllm/vllm-openai:latest
+    ipc: host  # required for vLLM shared memory
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    command: >
+      --model ${VLLM_MODEL:-Qwen/Qwen3-32B-AWQ}
+      --port 8000
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-10240}
+      --gpu-memory-utilization ${VLLM_GPU_UTIL:-0.90}
+      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-32}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # Pipeline waits for this before starting — vLLM is ready when /v1/models responds
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/v1/models"]
+      interval: 10s
+      timeout: 5s
+      retries: 60       # 60 × 10s = 10 min max wait (first run downloads weights)
+      start_period: 30s # Give vLLM time to start before health checks begin
+
+  # ─── Pipeline ────────────────────────────────────────────────────────────────
+  # Runs once after vLLM is healthy, then exits.
+  # docker compose up --abort-on-container-exit tears down vLLM when this exits.
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      vllm:
+        condition: service_healthy
+    environment:
+      LLM_BASE_URL: http://vllm:8000/v1
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      DISCORD_TWEET_WEBHOOK_URL: ${DISCORD_TWEET_WEBHOOK_URL:-}
+      TENTH_FLOOR_ROOT: /app
+      PIPELINE_ARGS: ${PIPELINE_ARGS:-}
+    volumes:
+      - ./data:/app/data    # signal DB + Parquet cache (persisted on host)
+      - ./logs:/app/logs    # pipeline + outcome logs
+    # Shell form so PIPELINE_ARGS expands correctly (supports --dry-run, pairs, etc.)
+    command: "python -m tenth_floor.main $PIPELINE_ARGS"
+
+volumes:
+  # HuggingFace model cache — persists between runs so weights aren't re-downloaded
+  huggingface_cache:

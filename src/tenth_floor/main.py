@@ -35,6 +35,7 @@ from tenth_floor.agents.trade_analyst import TradeAnalyst
 from tenth_floor.data.market_data import MarketDataFetcher
 from tenth_floor.data.models import (
     ConvictionTier,
+    MacroSignal,
     PlaybookEntry,
     PlaybookVerdict,
     ReviewVerdict,
@@ -197,6 +198,35 @@ def _fetch_macro_indicators() -> tuple[dict | None, dict | None]:
     except ImportError:
         logger.warning("yfinance not installed — skipping macro indicators")
         return None, None
+
+
+def _macro_alignment_bonus(
+    asset_class: str | None,
+    macro: MacroSignal,
+) -> float:
+    """Return a ranking bonus based on macro alignment for this asset class.
+
+    The bonus is added to the entry's confidence score for ranking purposes
+    only — it does not modify the published confidence number. It exists so
+    that when the signal cap activates, a high-confidence signal in a
+    macro-tailwind asset class outranks an equally-confident signal in a
+    macro-headwind class.
+
+    +0.10  outlook bullish
+     0.00  outlook neutral / unknown
+    -0.10  outlook bearish
+    """
+    if not asset_class:
+        return 0.0
+    for impact in macro.asset_class_impacts:
+        if impact.asset_class.lower() == asset_class.lower():
+            outlook = impact.outlook.lower()
+            if "bull" in outlook:
+                return 0.10
+            if "bear" in outlook:
+                return -0.10
+            return 0.0
+    return 0.0
 
 
 def _pre_screen(snapshots: list, funnel: FunnelTracker) -> list:
@@ -452,19 +482,35 @@ def run_pipeline(
         len(approved), len(rejected),
     )
 
-    # ── Signal cap — publish top N by confidence ──────────────────
+    # ── Signal cap — rank by macro-adjusted confidence ────────────
+    # Confidence alone is not enough: a 0.78 signal in a macro-tailwind
+    # asset class is a better trade than a 0.80 signal fighting the macro.
+    # We add a small bonus/penalty based on the MacroAnalyst's per-class
+    # outlook for ranking purposes only — the published confidence is
+    # untouched.
+    def _ranking_score(entry: PlaybookEntry) -> float:
+        ac = universe.asset_class_for(entry.symbol)
+        return entry.confidence_score + _macro_alignment_bonus(ac, macro_signal)
+
     max_signals = risk_profile.get("max_daily_signals", 3)
+    approved.sort(key=_ranking_score, reverse=True)
+
     if len(approved) > max_signals:
-        approved.sort(key=lambda e: e.confidence_score, reverse=True)
         funnel.signal_cap_killed = len(approved) - max_signals
+        dropped = approved[max_signals:]
         approved = approved[:max_signals]
         logger.info(
-            "Signal cap: kept top %d, dropped %d",
+            "Signal cap: kept top %d, dropped %d (macro-aligned ranking)",
             max_signals, funnel.signal_cap_killed,
         )
+        for d in dropped:
+            logger.info(
+                "  dropped %s  conf=%.2f  macro_adj=%+.2f",
+                d.symbol, d.confidence_score,
+                _macro_alignment_bonus(universe.asset_class_for(d.symbol), macro_signal),
+            )
 
-    # Re-rank (1 = highest confidence)
-    approved.sort(key=lambda e: e.confidence_score, reverse=True)
+    # Assign ranks (1 = top of macro-adjusted ranking)
     for i, entry in enumerate(approved, 1):
         approved[i - 1] = entry.model_copy(update={"rank": i})
 
