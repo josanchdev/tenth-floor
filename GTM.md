@@ -22,9 +22,10 @@ No leverage, no shorts, spot only.
 - **Multi-asset coverage.** Crypto, stocks, ETFs, commodities — structurally
   uncorrelated assets so the pipeline finds opportunities in any market regime.
   "The AI rejected all crypto today but found a setup in gold."
-- **7-gate filter system.** Trend regime → strategy → volume → market-leader
-  relative strength → confidence → R:R >= 2.0 → sector diversity. Most days,
-  very few pass. That's the point.
+- **3-agent AI pipeline.** MacroAnalyst sets the regime → TradeAnalyst proposes
+  per-asset trades with LLM-chosen entry/SL/TP → RiskReviewer approves at the
+  portfolio level. Python validates the math (R:R >= 1.5, sane levels) and
+  enforces hard rules. Most days, very few setups pass. That's the point.
 - **Full accountability.** Every signal is logged with entry, SL, TP, and tracked to
   outcome (TP hit, SL hit, or expired). Wins and losses published equally.
 - **Silence is a signal.** "We analyzed 36 markets and found 1 worth acting on" is
@@ -74,7 +75,7 @@ The goal is to build the track record and start an organic presence.
 - [ ] Create X account (handle, bio, profile pic/banner — don't post yet)
 - [ ] Landing page v1 — "coming soon" with:
   - What The Tenth Floor AI is (multi-asset, not crypto-only)
-  - The 7-gate philosophy ("why we say nothing most days")
+  - The 3-agent AI philosophy ("why we say nothing most days")
   - How the AI works (pipeline diagram, not technical jargon)
   - Email signup ("get notified when we launch")
   - No pricing yet
@@ -82,7 +83,7 @@ The goal is to build the track record and start an organic presence.
   - **Process content only** — no signals, no trades, no "buy this"
   - Funnel screenshots ("36 markets analyzed, 2 approved — here's why")
   - Philosophy posts ("why silence is our most common recommendation")
-  - "How the AI thinks" threads (gates, indicators, R:R)
+  - "How the AI thinks" threads (agents, indicators, R:R)
   - Multi-asset angle ("today the AI rejected all crypto but found gold")
   - 3-4 posts per week (you're a student with a job, not a content machine)
 - [x] Build auto-poster script (pipeline output → LLM drafts tweet → you review)
@@ -92,19 +93,20 @@ The goal is to build the track record and start an organic presence.
 These require zero track record — they're about the process:
 
 1. "Built an AI that analyzes 36 markets — crypto, stocks, gold, bonds — through
-   7 filters. Today it rejected everything except one gold setup. Here's the funnel."
-   [screenshot]
-2. "My AI has a minimum R:R of 2.0. Here's what that means and why most setups
+   a 3-agent pipeline (macro → trade → risk review). Today it rejected everything
+   except one gold setup. Here's the funnel." [screenshot]
+2. "My AI has a minimum R:R of 1.5. Here's what that means and why most setups
    fail it."
 3. "When crypto is in a downtrend, my AI doesn't force trades. It looks at gold,
    bonds, and defensive stocks instead."
 4. "Most signal services spam 10 trades a day. Mine is designed to say nothing
    unless the evidence is overwhelming."
-5. "I built a 7-gate filter for swing trades. Gate 1 alone killed 19 out of 36
-   assets today." [funnel visualization]
+5. "Three AI agents review every setup. Today the macro agent flagged risk-off
+   conditions and the trade agent skipped 32 of 36 assets on its own." [funnel
+   visualization]
 6. "Why I made my AI long-only, spot-only, no leverage. Thread."
 7. "My AI's most important feature: it tells me when NOT to trade."
-8. "36 assets. 4 markets. 7 filters. Max 3 signals per day. Most days: one or
+8. "36 assets. 4 markets. 3 AI agents. Max 3 signals per day. Most days: one or
    zero. That's the product."
 
 ### Phase 2 — Soft Launch (30+ closed trades)

@@ -31,7 +31,6 @@ class AssetClassConfig:
 
     name: str
     data_source: str  # "ccxt" or "yfinance"
-    class_leader: str
     check_timeframe: str  # "4h" for crypto, "1d" for equities
     expiry_days: int  # 14 for crypto, 10 for equities
     entry_type: str  # "immediate" or "conditional_open"
@@ -87,13 +86,6 @@ class Universe:
         a = self.asset(symbol)
         return a.sector if a else None
 
-    def class_leader_for(self, symbol: str) -> str | None:
-        """Return the class leader symbol for a given asset's class."""
-        ac = self.asset_class_for(symbol)
-        if ac is None:
-            return None
-        return self.class_configs[ac].class_leader
-
     def data_source_for(self, symbol: str) -> str | None:
         """Return 'ccxt' or 'yfinance' for a symbol."""
         ac = self.asset_class_for(symbol)
@@ -104,16 +96,6 @@ class Universe:
     def sector_map(self) -> dict[str, str]:
         """Return {symbol: sector} dict for all assets."""
         return {a.symbol: a.sector for a in self.assets}
-
-    def class_leaders(self) -> list[str]:
-        """Return deduplicated list of class leader symbols."""
-        seen: set[str] = set()
-        leaders: list[str] = []
-        for cfg in self.class_configs.values():
-            if cfg.class_leader not in seen:
-                seen.add(cfg.class_leader)
-                leaders.append(cfg.class_leader)
-        return leaders
 
     def asset_classes(self) -> list[str]:
         """Return list of asset class names."""
@@ -143,7 +125,6 @@ def load_universe(path: Path | None = None) -> Universe:
         class_configs[name] = AssetClassConfig(
             name=name,
             data_source=cfg["data_source"],
-            class_leader=cfg["class_leader"],
             check_timeframe=cfg["check_timeframe"],
             expiry_days=cfg["expiry_days"],
             entry_type=cfg["entry_type"],

@@ -1,5 +1,4 @@
 {
-  "min_setup_confidence": 0.65,
   "max_daily_signals": 2,
-  "_comment": "Tight thresholds for paid subscribers. Only publish when evidence is overwhelming."
+  "_comment": "Production overlay — tight signal cap for paid subscribers."
 }

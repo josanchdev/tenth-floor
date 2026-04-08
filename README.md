@@ -72,8 +72,8 @@ See [ROADMAP.md](ROADMAP.md) for the full V4 plan.
 
 Pipeline diagnostics, backtester, LLM retry, config profiles, failure
 alerting, LLM short-circuit, 26-pair universe, sector diversity cap,
-RSI divergence + capitulation bypass, DB migrations, CI, dynamic price
-precision, duplicate-safe Discord, market-price entries.
+DB migrations, CI, dynamic price precision, duplicate-safe Discord,
+market-price entries.
 
 ### V2 (complete)
 
@@ -231,10 +231,9 @@ the-tenth-floor/
 │   │   └── pair_snapshot.py   # PairSnapshot assembly
 │   ├── agents/
 │   │   ├── base.py            # Provider-agnostic LLM call + config
-│   │   ├── quant_agent.py     # Trend regime + confidence (V3, being replaced)
-│   │   ├── sentiment_agent.py # Macro sentiment bias (V3, being replaced)
-│   │   ├── strategy_agent.py  # LONG setup proposal (V3, being replaced)
-│   │   └── risk_agent.py      # Conviction tier + gating (V3, being replaced)
+│   │   ├── macro_analyst.py   # Macro regime + per-class outlook
+│   │   ├── trade_analyst.py   # Per-asset BUY/SKIP with LLM-chosen entry/SL/TP
+│   │   └── risk_reviewer.py   # Portfolio-level approval + conviction tiering
 │   ├── db/
 │   │   └── signal_logger.py   # SQLite signal persistence
 │   ├── notifications/

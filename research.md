@@ -120,11 +120,11 @@ Advocacy (tell friends, share wins, write reviews)
 
 The pipeline itself is the story. No other signal provider can show this:
 
-- *"Today our AI analyzed 26 pairs and rejected all of them — here's why"*
-- *"The 7 gates a signal must pass before we publish it"*
+- *"Today our AI analyzed 36 markets and rejected all of them — here's why"*
+- *"The 3 AI agents a signal must convince before we publish it"*
 - *"Why silence is our most common recommendation"*
 - *"Our AI stopped us from buying the dip on [COIN] today"*
-- Pipeline funnel visualizations (26 → trend gate → strategy → volume → R:R → 1 approved)
+- Pipeline funnel visualizations (36 → macro frame → per-asset analysis → portfolio review → 1 approved)
 
 **Automate from the pipeline:**
 - Daily funnel summaries → X posts

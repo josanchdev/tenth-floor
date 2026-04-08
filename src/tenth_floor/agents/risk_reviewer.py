@@ -3,7 +3,7 @@ RiskReviewer — portfolio-level review of all trade proposals.
 
 Sees ALL BUY proposals from TradeAnalyst at once. Makes portfolio-level
 decisions: approve/reject, conviction tiers, correlation checks, sector
-concentration. Replaces RiskAgent + mechanical gates.
+concentration. LLM-driven reasoning replaces mechanical gating.
 
 Usage::
 

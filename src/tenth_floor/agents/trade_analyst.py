@@ -1,8 +1,8 @@
 """
 TradeAnalyst — AI-first trade analysis with LLM-chosen price levels.
 
-Replaces QuantAgent + StrategyAgent. One coherent analysis per asset with
-full context: macro frame, TA indicators, structural levels, volume.
+One coherent analysis per asset with full context: macro frame, TA
+indicators, structural levels, volume.
 
 The LLM decides BUY or SKIP. If BUY, it picks entry zone, SL, TP with
 structural reasoning. Python validates the output for sanity but does not

@@ -1,5 +1,4 @@
 {
-  "min_setup_confidence": 0.57,
   "max_daily_signals": 3,
   "conviction_tiers": {
     "high": {
@@ -11,5 +10,5 @@
       "suggested_risk_pct": 0.01
     }
   },
-  "_comment": "Relaxed confidence floor for validation runs. Standard tier at 0.57 so more signals pass for quality evaluation."
+  "_comment": "Validation overlay — relaxed standard tier so more signals pass for quality evaluation."
 }

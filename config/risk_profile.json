@@ -1,12 +1,4 @@
 {
-  "timeframes": ["1d"],
-  "no_leverage": true,
-  "no_futures": true,
-  "no_margin": true,
-  "spot_only": true,
-  "min_setup_confidence": 0.65,
-  "stop_loss_atr_multiplier": 1.2,
-  "take_profit_rr_ratio": 2.0,
   "max_daily_signals": 2,
   "conviction_tiers": {
     "high": {
@@ -18,5 +10,5 @@
       "suggested_risk_pct": 0.01
     }
   },
-  "_comment": "Base risk profile. Use --profile to override with config/profiles/{name}.json."
+  "_comment": "Base risk profile. Use --profile to override with config/profiles/{name}.json. Spot-long-only and 1d timeframe are enforced in code."
 }
