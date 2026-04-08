@@ -18,14 +18,15 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import logging
 
 from langfuse import observe
 
 from tenth_floor.agents.base import (
     call_llm,
+    clean_json_response,
     load_agent_config,
-    parse_json_response,
 )
 from tenth_floor.data.models import (
     MacroSignal,
@@ -131,17 +132,23 @@ class TradeAnalyst:
             max_retries=self._config.get("max_retries", 3),
         )
 
-        proposal = parse_json_response(raw, TradeProposal)
+        # Parse at dict level so we can fix null/zero price fields on SKIP
+        # before Pydantic validation. LLMs sometimes return null instead of 0.
+        try:
+            data: dict = json.loads(clean_json_response(raw))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON from TradeAnalyst: {exc}") from exc
 
-        # SKIPs often return 0 for price fields — fill with dummy values so
-        # the model validates.  These proposals are discarded anyway.
-        if proposal.action == SetupAction.SKIP:
-            dummy_updates: dict[str, float] = {}
-            for field in ("entry_zone_low", "entry_zone_high", "stop_loss", "take_profit"):
-                if getattr(proposal, field) <= 0:
-                    dummy_updates[field] = 1.0
-            if dummy_updates:
-                proposal = proposal.model_copy(update=dummy_updates)
+        if str(data.get("action", "")).lower() == "skip":
+            price_fields = ("entry_zone_low", "entry_zone_high", "stop_loss", "take_profit")
+            for field in price_fields:
+                if not data.get(field):  # catches None, 0, missing
+                    data[field] = 1.0
+
+        try:
+            proposal = TradeProposal.model_validate(data)
+        except Exception as exc:
+            raise ValueError(f"TradeProposal validation failed: {exc}") from exc
 
         # Override LLM symbol with authoritative snapshot symbol
         if proposal.symbol != snapshot.symbol:
