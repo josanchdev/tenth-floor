@@ -280,6 +280,21 @@ class MarketDataFetcher:
 
         return df
 
+    def fetch_last_price(self, symbol: str) -> float:
+        """Return the most recent traded price via the public ticker.
+
+        Used for re-snapping ``entry_price`` right before a signal is
+        persisted, so the published entry reflects the price at publish
+        time rather than at the start of the pipeline (which can be
+        many minutes earlier after sequential LLM calls).
+        """
+        ccxt_symbol = self._normalise_symbol(symbol)
+        ticker = self._exchange.fetch_ticker(ccxt_symbol)
+        last = ticker.get("last") or ticker.get("close")
+        if last is None:
+            raise ValueError(f"No 'last' price in ticker for {symbol}")
+        return float(last)
+
     def fetch_ohlcv(
         self,
         symbol: str,

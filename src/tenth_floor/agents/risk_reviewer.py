@@ -60,9 +60,14 @@ clean structure, asymmetric R:R. You would size up on this trade.
 - "standard": Solid setup with minor headwinds or moderate confluence. \
 Worth taking at standard size.
 
+CONFIDENCE (only on approve, 0.0-1.0):
+- 0.85+: exceptional — textbook setup, would size up
+- 0.70-0.85: solid — worth taking at standard size
+- Below 0.70: reject the trade instead
+On reject, set confidence to 0.0.
+
 WHEN TO REJECT:
-- Setup is mediocre on its own (TradeAnalyst confidence < 0.65, weak \
-confluence, R:R barely above floor)
+- Setup is mediocre on its own (weak confluence, R:R barely above floor)
 - Macro environment is hostile to this asset class
 - Already-approved proposal today covers the same sector or theme — \
 pick the strongest, reject the rest
@@ -79,6 +84,7 @@ OUTPUT FORMAT (strict JSON, single object — NOT an array):
   "symbol": "<symbol>",
   "verdict": "approve|reject",
   "conviction": "high|standard",
+  "confidence": <float 0.0-1.0>,
   "reasoning": "<2-3 sentences: why approved/rejected in portfolio + macro context>",
   "risk_notes": "<specific risks for this signal, or empty string>"
 }
@@ -122,18 +128,18 @@ class RiskReviewer:
         if not proposals:
             return []
 
-        # Process strongest setups first so the CRO sees the best ideas
-        # before the marginal ones — and so already-approved context is
-        # built from the best, not random order.
-        ordered = sorted(proposals, key=lambda p: p.confidence, reverse=True)
+        # Review in input order — upstream ranking (macro-aware) already
+        # decided the sequence, so the CRO sees the best ideas first and
+        # the already-approved context is built from the best.
+        ordered = list(proposals)
 
         approved_so_far: list[tuple[TradeProposal, ReviewedSignal]] = []
         results_by_symbol: dict[str, ReviewedSignal] = {}
 
         for i, proposal in enumerate(ordered, 1):
             logger.info(
-                "RiskReviewer %d/%d  reviewing %s  conf=%.2f",
-                i, len(ordered), proposal.symbol, proposal.confidence,
+                "RiskReviewer %d/%d  reviewing %s",
+                i, len(ordered), proposal.symbol,
             )
             review = self._review_one(proposal, macro, open_signals or [], approved_so_far)
             results_by_symbol[proposal.symbol] = review
@@ -192,6 +198,7 @@ class RiskReviewer:
                 symbol=proposal.symbol,
                 verdict="reject",
                 conviction="standard",
+                confidence=0.0,
                 reasoning="RiskReviewer error — defaulted to reject for safety",
                 risk_notes="",
             )
@@ -225,9 +232,9 @@ class RiskReviewer:
             )
 
         # The proposal under review — full thesis, not compressed
-        entry_mid = (proposal.entry_zone_low + proposal.entry_zone_high) / 2
-        risk = entry_mid - proposal.stop_loss
-        reward = proposal.take_profit - entry_mid
+        entry = proposal.entry_price
+        risk = entry - proposal.stop_loss
+        reward = proposal.take_profit - entry
         rr = round(reward / risk, 2) if risk > 0 else 0
 
         confluence = "\n".join(f"    - {f}" for f in proposal.confluence_factors) or "    (none provided)"
@@ -236,14 +243,12 @@ class RiskReviewer:
         proposal_section = (
             f"PROPOSAL UNDER REVIEW:\n"
             f"  Symbol: {proposal.symbol}  ({proposal.timeframe})\n"
-            f"  TradeAnalyst confidence: {proposal.confidence:.2f}\n"
-            f"  Entry zone: {proposal.entry_zone_low} – {proposal.entry_zone_high}\n"
+            f"  Entry: {proposal.entry_price}\n"
             f"  Stop-loss: {proposal.stop_loss}\n"
             f"  Take-profit: {proposal.take_profit}\n"
             f"  Reward:Risk: {rr}\n"
             f"\n  Trade thesis:\n  {proposal.rationale}\n"
-            f"\n  Entry reasoning: {proposal.entry_reasoning}\n"
-            f"  Stop reasoning: {proposal.stop_reasoning}\n"
+            f"\n  Stop reasoning: {proposal.stop_reasoning}\n"
             f"  Target reasoning: {proposal.target_reasoning}\n"
             f"\n  Confluence factors:\n{confluence}\n"
             f"\n  Risk factors:\n{risks}\n"
@@ -269,7 +274,7 @@ class RiskReviewer:
             for prop, rev in approved_so_far:
                 approved_section += (
                     f"  - {prop.symbol}  conviction={rev.conviction.value}  "
-                    f"conf={prop.confidence:.2f}\n"
+                    f"conf={rev.confidence:.2f}\n"
                     f"    {rev.reasoning}\n"
                 )
         else:

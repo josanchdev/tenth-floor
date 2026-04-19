@@ -294,8 +294,10 @@ class MacroSignal(BaseModel):
 class TradeProposal(BaseModel):
     """Output of TradeAnalyst — LLM-decided trade setup.
 
-    The LLM picks entry, SL, TP based on structural analysis. Python
-    validates the output for sanity but does not override levels.
+    The LLM picks SL and TP based on structural analysis. Entry is the
+    snapshot's ``current_price`` — set by the pipeline after parsing,
+    not chosen by the LLM. We run once daily and a signal is only valid
+    against the price at the moment it was published.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -306,19 +308,15 @@ class TradeProposal(BaseModel):
     direction: SignalDirection = Field(..., description="'long' or 'neutral'")
 
     # LLM-chosen price levels (may be 0 for SKIPs — Python validation
-    # only runs on BUY proposals so the gt=0 check lives there, not here)
-    entry_zone_low: float = Field(..., ge=0, description="Lower bound of entry zone")
-    entry_zone_high: float = Field(..., ge=0, description="Upper bound of entry zone")
+    # only runs on BUY proposals so the gt=0 check lives there, not here).
+    # ``entry_price`` is the snapshot price at publish time, attached by
+    # the pipeline after the LLM call returns.
+    entry_price: float = Field(..., ge=0, description="Snapshot price at publish time")
     stop_loss: float = Field(..., ge=0, description="Stop-loss price")
     take_profit: float = Field(..., ge=0, description="Take-profit price")
 
     # LLM assessment
-    confidence: float = Field(
-        ..., ge=0.0, le=1.0,
-        description="TradeAnalyst's confidence in this setup (0-1)",
-    )
     rationale: str = Field(..., description="Full trade thesis — 3-5 sentences")
-    entry_reasoning: str = Field("", description="Why this entry zone")
     stop_reasoning: str = Field("", description="Why this stop-loss level")
     target_reasoning: str = Field("", description="Why this take-profit level")
     confluence_factors: list[str] = Field(
@@ -343,12 +341,16 @@ class ReviewedSignal(BaseModel):
     symbol: str
     verdict: ReviewVerdict = Field(..., description="'approve' or 'reject'")
     conviction: ConvictionTier = Field(..., description="'high' or 'standard'")
+    confidence: float = Field(
+        0.0, ge=0.0, le=1.0,
+        description="RiskReviewer's confidence in this signal (0-1). Required on approve, 0.0 on reject.",
+    )
     reasoning: str = Field(..., description="Why approved/rejected — portfolio context")
     risk_notes: str = Field("", description="Specific risk flags for this signal")
 
 
 # =====================================================================
-# 4 – PlaybookEntry (final output contract for DB + Discord)
+# 4 – PlaybookEntry (final output contract for DB + dashboard)
 # =====================================================================
 
 
@@ -356,7 +358,8 @@ class PlaybookEntry(BaseModel):
     """Final vetted signal for the daily playbook.
 
     Assembled by the pipeline from TradeProposal + ReviewedSignal.
-    This is the contract that signal_logger and discord_notifier consume.
+    Consumed by signal_logger for SQLite persistence and by the dashboard
+    API layer (`tenth_floor.api.signals`) for read endpoints.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -376,10 +379,12 @@ class PlaybookEntry(BaseModel):
         ..., description="Why the signal was approved or rejected"
     )
 
-    # Trade setup (from TradeAnalyst, validated by Python)
+    # Trade setup (from TradeAnalyst, validated by Python).
+    # ``entry_price`` is the snapshot price at publish time — there is no
+    # entry zone and no PENDING lifecycle. The signal opens immediately at
+    # the price the operator saw on the dashboard.
     direction: SignalDirection
-    entry_zone_low: float = Field(..., gt=0)
-    entry_zone_high: float = Field(..., gt=0)
+    entry_price: float = Field(..., gt=0)
     stop_loss: float = Field(..., gt=0)
     take_profit: float = Field(..., gt=0)
     reward_risk_ratio: float = Field(..., gt=0)
@@ -387,7 +392,7 @@ class PlaybookEntry(BaseModel):
     # Conviction (from RiskReviewer)
     confidence_score: float = Field(
         ..., ge=0.0, le=1.0,
-        description="TradeAnalyst confidence score (0–1)",
+        description="RiskReviewer confidence score (0–1)",
     )
     conviction: ConvictionTier = Field(
         ..., description="Conviction tier: 'high' or 'standard'"

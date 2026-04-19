@@ -26,9 +26,6 @@ observability:
     flush_at: 15                      # batch size before flushing traces
     flush_interval: 30                # seconds between auto-flushes
 
-discord:
-  # Set DISCORD_WEBHOOK_URL in your .env file.
-
 database:
   path: data/playbook_history.db      # SQLite signal log, relative to project root
   schema: db/schema.sql               # DDL applied on first run via CREATE TABLE IF NOT EXISTS

@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tenth Floor — Design Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0A0712;
+    --surface: rgba(255,255,255,0.03);
+    --border: rgba(255,255,255,0.06);
+    --text: #F0F4FF;
+    --text-70: rgba(240,244,255,0.70);
+    --text-50: rgba(240,244,255,0.50);
+    --text-40: rgba(240,244,255,0.40);
+    --text-30: rgba(240,244,255,0.30);
+    --purple: #B47BFF;
+    --purple-soft: rgba(180,123,255,0.35);
+    --purple-light: #D4B3FF;
+    --purple-deep: #7C3AED;
+    --teal: #5EEAD4;
+    --teal-soft: rgba(94,234,212,0.35);
+    --radius: 12px;
+    --brand-gradient: linear-gradient(135deg, #F0F4FF 0%, #D4B3FF 40%, #B47BFF 75%, #7C3AED 100%);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Geist', system-ui, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  /* Background: minimal — single faint purple wash, top-right only */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 50% 40% at 90% 0%, rgba(180,123,255,0.06), transparent 65%);
+  }
+  .noise {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.025;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  main {
+    position: relative;
+    z-index: 2;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 80px 48px 120px;
+  }
+
+  /* Hero */
+  .eyebrow {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-50);
+    margin-bottom: 24px;
+  }
+  .hero {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 48px;
+    padding-bottom: 40px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero-title {
+    font-size: 56px;
+    font-weight: 300;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    margin: 0;
+    background: var(--brand-gradient);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+  .hero-sub {
+    font-family: 'Geist Mono', monospace;
+    color: var(--text-50);
+    font-size: 12px;
+    margin-top: 16px;
+    letter-spacing: 0.04em;
+  }
+  .hero-sub .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--purple-light);
+    margin-right: 8px;
+    vertical-align: middle;
+    box-shadow: 0 0 12px var(--purple);
+    animation: dotPulse 2s ease-in-out infinite;
+  }
+  @keyframes dotPulse {
+    0%,100% { opacity: 0.6; }
+    50%     { opacity: 1; }
+  }
+  .run-btn {
+    background: linear-gradient(135deg, var(--purple) 0%, var(--purple-deep) 100%);
+    color: var(--text);
+    border: none;
+    border-radius: var(--radius);
+    padding: 18px 32px;
+    font-family: 'Geist', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px rgba(180,123,255,0.5), 0 12px 48px rgba(180,123,255,0.35);
+    transition: all 0.2s ease;
+  }
+  .run-btn:hover {
+    box-shadow: 0 0 0 1px rgba(180,123,255,0.8), 0 16px 64px rgba(180,123,255,0.5);
+    transform: translateY(-1px);
+  }
+
+  section {
+    margin-top: 96px;
+  }
+  .section-label {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-40);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-label::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* KPI strip */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+  .kpi {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    backdrop-filter: blur(12px);
+  }
+  .kpi-label {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-40);
+    margin-bottom: 12px;
+  }
+  .kpi-value {
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    font-feature-settings: "tnum";
+  }
+  .kpi-delta {
+    font-family: 'Geist Mono', monospace;
+    font-size: 12px;
+    color: var(--purple-light);
+    margin-top: 8px;
+  }
+  .kpi-delta.neg { color: #FF7B9C; }
+  .kpi-value.accent {
+    background: var(--brand-gradient);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+
+  /* Asset cards */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+  }
+  .card .symbol {
+    font-family: 'Geist Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .card .state {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-40);
+    margin-top: 4px;
+  }
+  .card .price {
+    font-size: 20px;
+    font-weight: 400;
+    margin-top: 20px;
+    font-feature-settings: "tnum";
+  }
+  .card .meta {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    color: var(--text-50);
+    margin-top: 6px;
+  }
+
+  /* State: queued (default flat) */
+  .card.queued .symbol,
+  .card.queued .price { color: var(--text-40); }
+
+  /* State: analyzing — teal pulse + shimmer */
+  .card.analyzing {
+    border-color: var(--teal-soft);
+    box-shadow: 0 0 0 1px rgba(94,234,212,0.15), 0 0 32px rgba(94,234,212,0.18);
+    animation: tealPulse 2.4s ease-in-out infinite;
+  }
+  .card.analyzing .state { color: var(--teal); }
+  .card.analyzing::before {
+    content: "";
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--teal), transparent);
+    animation: shimmer 2s linear infinite;
+  }
+  @keyframes tealPulse {
+    0%,100% { box-shadow: 0 0 0 1px rgba(94,234,212,0.15), 0 0 24px rgba(94,234,212,0.14); }
+    50%     { box-shadow: 0 0 0 1px rgba(94,234,212,0.35), 0 0 40px rgba(94,234,212,0.28); }
+  }
+  @keyframes shimmer {
+    0%   { left: -100%; }
+    100% { left: 100%; }
+  }
+
+  /* State: proposal */
+  .card.proposal {
+    border-color: var(--purple-soft);
+  }
+  .card.proposal .state { color: var(--purple); }
+
+  /* State: approved */
+  .card.approved {
+    border-color: var(--purple);
+    background: linear-gradient(180deg, rgba(180,123,255,0.08) 0%, rgba(180,123,255,0.02) 100%);
+    box-shadow: 0 0 0 1px rgba(180,123,255,0.4), 0 8px 48px rgba(180,123,255,0.22);
+  }
+  .card.approved .state { color: var(--purple); font-weight: 500; }
+  .card.approved .price {
+    background: var(--brand-gradient);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+
+  /* State: rejected */
+  .card.rejected {
+    opacity: 0.3;
+  }
+  .card.rejected .price { text-decoration: line-through; }
+
+  /* Palette */
+  .palette {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 16px;
+  }
+  .swatch {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .swatch .chip {
+    width: 100%;
+    height: 72px;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+  }
+  .swatch .name {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    color: var(--text-70);
+  }
+  .swatch .hex {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    color: var(--text-40);
+    margin-top: 2px;
+  }
+
+  /* Type */
+  .type-grid {
+    display: grid;
+    gap: 32px;
+  }
+  .type-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    align-items: baseline;
+    gap: 32px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .type-row .label {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-40);
+  }
+  .t-display { font-size: 72px; font-weight: 300; letter-spacing: -0.03em; line-height: 1; }
+  .t-h1      { font-size: 40px; font-weight: 400; letter-spacing: -0.02em; }
+  .t-h2      { font-size: 24px; font-weight: 500; letter-spacing: -0.01em; }
+  .t-body    { font-size: 15px; font-weight: 400; color: var(--text-70); line-height: 1.6; }
+  .t-small   { font-size: 12px; color: var(--text-50); }
+  .t-mono    { font-family: 'Geist Mono', monospace; font-size: 13px; color: var(--teal); }
+
+  footer {
+    margin-top: 120px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-30);
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+  <div class="noise"></div>
+
+  <main>
+    <div class="eyebrow">The Tenth Floor · 2026-04-11 · Friday</div>
+
+    <div class="hero">
+      <div>
+        <h1 class="hero-title">Today's research</h1>
+        <div class="hero-sub"><span class="dot"></span>Pipeline idle · last run 14:32 · 6 signals published</div>
+      </div>
+      <button class="run-btn">Run pipeline</button>
+    </div>
+
+    <section>
+      <div class="section-label">Portfolio snapshot</div>
+      <div class="kpi-grid">
+        <div class="kpi">
+          <div class="kpi-label">Expectancy</div>
+          <div class="kpi-value accent">+0.82<span style="font-size:16px; margin-left:4px; color: var(--purple-light);">R</span></div>
+          <div class="kpi-delta">n=47 · CI [+0.31, +1.33]</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Win rate</div>
+          <div class="kpi-value">61%</div>
+          <div class="kpi-delta">+4% vs last 30d</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Avg R:R</div>
+          <div class="kpi-value">2.3</div>
+          <div class="kpi-delta">realized</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Open positions</div>
+          <div class="kpi-value">3</div>
+          <div class="kpi-delta">2 pending fill</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-label">Asset card states</div>
+      <div class="cards">
+        <div class="card queued">
+          <div class="symbol">SOLUSDT</div>
+          <div class="state">Queued</div>
+          <div class="price">—</div>
+          <div class="meta">waiting</div>
+        </div>
+        <div class="card analyzing">
+          <div class="symbol">ETHUSDT</div>
+          <div class="state">Analyzing</div>
+          <div class="price">3,412.08</div>
+          <div class="meta">trade_analyst · 4.2s</div>
+        </div>
+        <div class="card proposal">
+          <div class="symbol">AAPL</div>
+          <div class="state">Proposal</div>
+          <div class="price">184.20</div>
+          <div class="meta">R:R 2.1 · conf 0.68</div>
+        </div>
+        <div class="card approved">
+          <div class="symbol">BTCUSDT</div>
+          <div class="state">Approved</div>
+          <div class="price">67,420</div>
+          <div class="meta">high conviction · R:R 2.8</div>
+        </div>
+        <div class="card rejected">
+          <div class="symbol">GLD</div>
+          <div class="state">Rejected</div>
+          <div class="price">192.40</div>
+          <div class="meta">R:R 1.2 &lt; floor</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-label">Palette</div>
+      <div class="palette">
+        <div class="swatch">
+          <div class="chip" style="background:#0A0712"></div>
+          <div class="name">bg</div>
+          <div class="hex">#0A0712</div>
+        </div>
+        <div class="swatch">
+          <div class="chip" style="background:rgba(255,255,255,0.03)"></div>
+          <div class="name">surface</div>
+          <div class="hex">white/3%</div>
+        </div>
+        <div class="swatch">
+          <div class="chip" style="background:#F0F4FF"></div>
+          <div class="name">text</div>
+          <div class="hex">#F0F4FF</div>
+        </div>
+        <div class="swatch">
+          <div class="chip" style="background:#B47BFF"></div>
+          <div class="name">purple</div>
+          <div class="hex">#B47BFF</div>
+        </div>
+        <div class="swatch">
+          <div class="chip" style="background:#5EEAD4"></div>
+          <div class="name">teal</div>
+          <div class="hex">#5EEAD4</div>
+        </div>
+        <div class="swatch">
+          <div class="chip" style="background:rgba(255,255,255,0.06)"></div>
+          <div class="name">border</div>
+          <div class="hex">white/6%</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-label">Type scale · Geist / Geist Mono</div>
+      <div class="type-grid">
+        <div class="type-row">
+          <div class="label">display</div>
+          <div class="t-display">+0.82R</div>
+        </div>
+        <div class="type-row">
+          <div class="label">h1</div>
+          <div class="t-h1">Today's signals</div>
+        </div>
+        <div class="type-row">
+          <div class="label">h2</div>
+          <div class="t-h2">Risk reviewer · portfolio pass</div>
+        </div>
+        <div class="type-row">
+          <div class="label">body</div>
+          <div class="t-body">Long BTC at 67,200–67,600. Stop 65,800, target 71,500. High conviction — confluence of weekly range reclaim, funding reset, and regime flip to risk-on in the macro frame.</div>
+        </div>
+        <div class="type-row">
+          <div class="label">small</div>
+          <div class="t-small">Published 2026-04-11 · expires in 13d 22h</div>
+        </div>
+        <div class="type-row">
+          <div class="label">mono</div>
+          <div class="t-mono">run_id=20260411_a4f2c  ·  phase=risk_reviewer  ·  elapsed=12.4s</div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div>preview · not a real run</div>
+      <div>geist · #B47BFF · #5EEAD4</div>
+    </footer>
+  </main>
+</body>
+</html>

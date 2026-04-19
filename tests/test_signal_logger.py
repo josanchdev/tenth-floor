@@ -34,8 +34,7 @@ def approved_entry() -> PlaybookEntry:
         verdict=PlaybookVerdict.APPROVED,
         verdict_reasoning="Strong setup.",
         direction=SignalDirection.LONG,
-        entry_zone_low=61690.0,
-        entry_zone_high=62310.0,
+        entry_price=62000.0,
         stop_loss=61090.0,
         take_profit=63510.0,
         reward_risk_ratio=2.0,
@@ -56,8 +55,7 @@ def rejected_entry() -> PlaybookEntry:
         verdict=PlaybookVerdict.REJECTED,
         verdict_reasoning="Confidence too low.",
         direction=SignalDirection.LONG,
-        entry_zone_low=3400.0,
-        entry_zone_high=3440.0,
+        entry_price=3420.0,
         stop_loss=3300.0,
         take_profit=3600.0,
         reward_risk_ratio=2.0,
@@ -82,7 +80,7 @@ class TestSignalLogger:
         assert "signals" in tables
 
     def test_log_approved_signal(self, logger: SignalLogger, approved_entry: PlaybookEntry) -> None:
-        """Approved entry is inserted with status PENDING."""
+        """Approved entry is inserted with status OPEN."""
         signal_id = logger.log(approved_entry)
 
         assert signal_id is not None
@@ -91,11 +89,10 @@ class TestSignalLogger:
         row = logger.get_signal(signal_id)
         assert row is not None
         assert row["pair"] == "BTCUSDT"
-        assert row["status"] == "PENDING"
+        assert row["status"] == "OPEN"
         assert row["conviction"] == "high"
         assert row["confidence_score"] == 0.82
-        assert row["entry_low"] == 61690.0
-        assert row["entry_high"] == 62310.0
+        assert row["entry_price"] == 62000.0
         assert row["stop_loss"] == 61090.0
         assert row["take_profit"] == 63510.0
 
@@ -106,20 +103,17 @@ class TestSignalLogger:
         assert logger.open_signal_count() == 0
 
     def test_open_signal_count(self, logger: SignalLogger, approved_entry: PlaybookEntry) -> None:
-        """Count includes both PENDING and OPEN signals."""
+        """Count includes OPEN signals."""
         logger.log(approved_entry)
         assert logger.open_signal_count() == 1
 
         # Log another
         entry2 = approved_entry.model_copy(update={"symbol": "ETHUSDT"})
-        signal_id = logger.log(entry2)
-
-        # Transition one to OPEN
-        logger.update_signal(signal_id, status="OPEN")
+        logger.log(entry2)
         assert logger.open_signal_count() == 2
 
     def test_get_active_signals(self, logger: SignalLogger, approved_entry: PlaybookEntry) -> None:
-        """Returns PENDING and OPEN signals, not resolved ones."""
+        """Returns OPEN signals, not resolved ones."""
         id1 = logger.log(approved_entry)
         entry2 = approved_entry.model_copy(update={"symbol": "ETHUSDT"})
         id2 = logger.log(entry2)
@@ -162,3 +156,82 @@ class TestSignalLogger:
 
         row = logger.get_signal(signal_id)
         assert row["langfuse_trace_id"] == "trace-abc-123"
+
+
+class TestSignalTier:
+    """Tier column — PUBLISHED (top-N, tracked) vs SESSION (runner-up, 24h TTL)."""
+
+    def test_default_tier_is_published(
+        self, logger: SignalLogger, approved_entry: PlaybookEntry
+    ) -> None:
+        signal_id = logger.log(approved_entry)
+        assert logger.get_signal(signal_id)["tier"] == "PUBLISHED"
+
+    def test_log_session_tier(
+        self, logger: SignalLogger, approved_entry: PlaybookEntry
+    ) -> None:
+        signal_id = logger.log(approved_entry, tier="SESSION")
+        assert logger.get_signal(signal_id)["tier"] == "SESSION"
+
+    def test_invalid_tier_raises(
+        self, logger: SignalLogger, approved_entry: PlaybookEntry
+    ) -> None:
+        with pytest.raises(ValueError, match="Invalid tier"):
+            logger.log(approved_entry, tier="DRAFT")
+
+    def test_get_active_signals_excludes_session(
+        self, logger: SignalLogger, approved_entry: PlaybookEntry
+    ) -> None:
+        """Outcome checker must never see session signals."""
+        logger.log(approved_entry, tier="PUBLISHED")
+        eth = approved_entry.model_copy(update={"symbol": "ETHUSDT"})
+        logger.log(eth, tier="SESSION")
+
+        active = logger.get_active_signals()
+        assert len(active) == 1
+        assert active[0]["pair"] == "BTCUSDT"
+
+    def test_open_signal_count_excludes_session(
+        self, logger: SignalLogger, approved_entry: PlaybookEntry
+    ) -> None:
+        logger.log(approved_entry, tier="PUBLISHED")
+        eth = approved_entry.model_copy(update={"symbol": "ETHUSDT"})
+        logger.log(eth, tier="SESSION")
+        assert logger.open_signal_count() == 1
+
+    def test_get_recent_signals_filters_by_tier(
+        self, logger: SignalLogger, approved_entry: PlaybookEntry
+    ) -> None:
+        logger.log(approved_entry, tier="PUBLISHED")
+        eth = approved_entry.model_copy(update={"symbol": "ETHUSDT"})
+        logger.log(eth, tier="SESSION")
+
+        published = logger.get_recent_signals(lookback_days=90, tier="PUBLISHED")
+        session = logger.get_recent_signals(lookback_days=90, tier="SESSION")
+        assert {r["pair"] for r in published} == {"BTCUSDT"}
+        assert {r["pair"] for r in session} == {"ETHUSDT"}
+
+    def test_session_age_filter_drops_old_session_rows(
+        self, logger: SignalLogger, approved_entry: PlaybookEntry
+    ) -> None:
+        """Session rows older than 24h disappear from default queries."""
+        from datetime import UTC, datetime, timedelta
+
+        logger.log(approved_entry, tier="PUBLISHED")
+        eth = approved_entry.model_copy(update={"symbol": "ETHUSDT"})
+        session_id = logger.log(eth, tier="SESSION")
+
+        old = (datetime.now(UTC) - timedelta(hours=30)).isoformat()
+        logger._conn.execute(
+            "UPDATE signals SET created_at = ? WHERE signal_id = ?",
+            (old, session_id),
+        )
+        logger._conn.commit()
+
+        default = logger.get_recent_signals(lookback_days=90)
+        assert {r["pair"] for r in default} == {"BTCUSDT"}
+
+        with_expired = logger.get_recent_signals(
+            lookback_days=90, include_expired_session=True
+        )
+        assert {r["pair"] for r in with_expired} == {"BTCUSDT", "ETHUSDT"}

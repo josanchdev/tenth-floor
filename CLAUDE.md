@@ -22,35 +22,27 @@ ruff check src/ tests/                 # lint (E, F, I, UP, B rules; line-length
 ruff check --fix src/                  # auto-fix
 mypy src/tenth_floor/                  # type check (Python 3.12 target)
 
-# Run pipeline
+# Dashboard (the operational path — FastAPI + Vite in parallel)
+./dashboard.sh                                # http://localhost:5173
+
+# Headless pipeline (dev / debug only — dashboard Run button is the norm)
 python -m tenth_floor.main                    # full universe
 python -m tenth_floor.main BTCUSDT ETHUSDT    # specific pairs
-python -m tenth_floor.main --dry-run           # no DB writes, no Discord post
+python -m tenth_floor.main --dry-run          # no DB writes
 
 # Outcome checker (resolves PENDING/OPEN signals against real candles)
 python -m tenth_floor.check_outcomes
 python -m tenth_floor.check_outcomes --dry-run
 
-# Operational script (starts vLLM + runs pipeline + outcomes + DB backup)
-./run.sh                    # full run
-./run.sh --dry-run          # test run
-./run.sh --reset-db         # wipe and recreate DB from schema.sql
-./run.sh --outcomes-only    # skip pipeline, just check outcomes
-
-# Tweet auto-poster
-python -m tenth_floor.post_tweet                # draft + interactive post
-python -m tenth_floor.post_tweet --draft-only   # generate draft only (no posting)
-python -m tenth_floor.post_tweet 2026-03-28     # specific date
-
-# Dashboard
-streamlit run src/tenth_floor/dashboard/app.py
+# CLI helpers (see ./run.sh --help)
+./run.sh --local                              # headless local pipeline run
+./run.sh --outcomes-only                      # resolve PENDING/OPEN signals
+./run.sh --reset-db                           # wipe + recreate signal DB from schema.sql
 ```
 
 ## Architecture
 
-**The Tenth Floor AI** is a multi-agent LLM pipeline that publishes daily swing-trade signals to a paid Discord community. It runs locally with Qwen3-32B-AWQ on vLLM.
-
-V4 is expanding from crypto-only to a multi-asset universe (~36 assets: crypto, US equities, ETFs, commodities) AND shifting to an AI-first architecture where the LLM makes trading decisions and Python validates. See [ROADMAP.md](ROADMAP.md) for the full plan.
+**The Tenth Floor** is a personal multi-agent LLM research tool that produces daily swing-trade signals across a ~36-asset universe (crypto, US equities, ETFs, commodities). It runs locally with Qwen3-32B-AWQ on vLLM. The operator triggers runs from a React dashboard — there is no cron, no scheduler, no auto-publishing to external channels. See [plan.md](plan.md) for the 365-day experiment plan; [ROADMAP.md](ROADMAP.md) for the V4 architecture history.
 
 ### Pipeline Flow (Phase 1.5: AI-First)
 
@@ -67,7 +59,7 @@ Python validation (sanity checks) ──→ valid proposals
                                                     ↓
 RiskReviewer (1 LLM call, ALL proposals) ──→ approved signals with conviction
                                                     ↓
-Signal cap (business rule) ──→ featured signals ──→ SignalLogger + Discord
+Signal cap (business rule) ──→ featured signals ──→ SignalLogger (dashboard reads SQLite)
 ```
 
 ### Hard Rules

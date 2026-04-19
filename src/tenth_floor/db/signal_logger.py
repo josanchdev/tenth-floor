@@ -29,6 +29,16 @@ from tenth_floor.data.models import PlaybookEntry, PlaybookVerdict  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+def _iso_to_epoch(value: object) -> float:
+    """Best-effort ISO-8601 → epoch seconds. Returns 0.0 on failure."""
+    if not isinstance(value, str):
+        return 0.0
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def _load_db_config() -> dict:
     """Load database config from ``config/services.yaml``."""
     path = CONFIG_DIR / "services.yaml"
@@ -137,6 +147,7 @@ class SignalLogger:
         entry: PlaybookEntry,
         langfuse_trace_id: str | None = None,
         asset_class: str | None = None,
+        tier: str = "PUBLISHED",
     ) -> str | None:
         """Insert an approved signal into the database.
 
@@ -151,6 +162,9 @@ class SignalLogger:
             Optional Langfuse trace ID for observability linkage.
         asset_class:
             Asset class label (e.g. ``"crypto"``, ``"equity"``).
+        tier:
+            ``"PUBLISHED"`` (top-N, tracked for outcomes) or
+            ``"SESSION"`` (runner-up approval, dashboard-only, 24h TTL).
 
         Returns
         -------
@@ -160,6 +174,8 @@ class SignalLogger:
         if entry.verdict != PlaybookVerdict.APPROVED:
             logger.debug("Skipping non-approved entry: %s %s", entry.symbol, entry.verdict.value)
             return None
+        if tier not in ("PUBLISHED", "SESSION"):
+            raise ValueError(f"Invalid tier: {tier!r}")
 
         signal_id = f"{entry.symbol}_{entry.report_date}_{uuid.uuid4().hex[:8]}"
         now = datetime.now(UTC).isoformat()
@@ -169,20 +185,21 @@ class SignalLogger:
             INSERT OR IGNORE INTO signals (
                 signal_id, created_at, report_date, pair, timeframe,
                 direction, conviction, confidence_score,
-                entry_low, entry_high, stop_loss, take_profit,
+                entry_price, stop_loss, take_profit,
                 reward_risk, suggested_risk_pct, strategy_rationale,
-                status, langfuse_trace_id, asset_class
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, COALESCE(?, 'unknown'))
+                status, langfuse_trace_id, asset_class, tier
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, COALESCE(?, 'unknown'), ?)
             """,
             (
                 signal_id, now, entry.report_date, entry.symbol, entry.timeframe,
                 entry.direction.value, entry.conviction, entry.confidence_score,
-                entry.entry_zone_low, entry.entry_zone_high,
+                entry.entry_price,
                 entry.stop_loss, entry.take_profit,
                 entry.reward_risk_ratio, entry.suggested_risk_pct,
                 entry.rationale,
                 langfuse_trace_id,
                 asset_class,
+                tier,
             ),
         )
         self._conn.commit()
@@ -201,20 +218,23 @@ class SignalLogger:
         return signal_id
 
     def open_signal_count(self) -> int:
-        """Count signals with status PENDING or OPEN."""
+        """Count published signals currently OPEN (awaiting resolution)."""
         row = self._conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE status IN ('PENDING', 'OPEN')"
+            "SELECT COUNT(*) FROM signals "
+            "WHERE status = 'OPEN' AND tier = 'PUBLISHED'"
         ).fetchone()
         return row[0]
 
     def get_active_signals(self) -> list[dict]:
-        """Return all PENDING and OPEN signals as dicts.
+        """Return all OPEN published signals as dicts.
 
-        Used by ``check_outcomes.py`` to determine which signals need
-        candle-walking.
+        Session-tier signals are runner-ups that the dashboard surfaces
+        for 24h but are never tracked for win/loss outcomes.
         """
         rows = self._conn.execute(
-            "SELECT * FROM signals WHERE status IN ('PENDING', 'OPEN') ORDER BY created_at"
+            "SELECT * FROM signals "
+            "WHERE status = 'OPEN' AND tier = 'PUBLISHED' "
+            "ORDER BY created_at"
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -233,8 +253,9 @@ class SignalLogger:
             return
         # Whitelist allowed columns
         allowed = {
-            "status", "entered_at", "outcome_price", "outcome_date",
+            "status", "outcome_price", "outcome_date",
             "max_adverse_excursion", "max_favorable_excursion",
+            "notion_page_id",
         }
         bad_keys = set(updates.keys()) - allowed
         if bad_keys:
@@ -318,13 +339,43 @@ class SignalLogger:
         ).fetchone()
         return dict(row) if row else None
 
-    def get_recent_signals(self, lookback_days: int = 30) -> list[dict]:
-        """Fetch all signals from the last N days."""
+    def get_recent_signals(
+        self,
+        lookback_days: int = 30,
+        tier: str | None = None,
+        include_expired_session: bool = False,
+    ) -> list[dict]:
+        """Fetch signals from the last N days.
+
+        Parameters
+        ----------
+        lookback_days:
+            Date window applied to ``report_date``.
+        tier:
+            ``"PUBLISHED"``, ``"SESSION"``, or ``None`` (both).
+        include_expired_session:
+            Session signals have a 24h dashboard TTL — by default
+            session rows older than 24h are filtered out. Pass ``True``
+            for archive views that need the full history.
+        """
         rows = self._conn.execute(
             "SELECT * FROM signals WHERE report_date >= date('now', ?)",
             (f"-{lookback_days} days",),
         ).fetchall()
-        return [dict(row) for row in rows]
+        result = [dict(row) for row in rows]
+
+        if tier is not None:
+            result = [r for r in result if r.get("tier") == tier]
+
+        if not include_expired_session:
+            cutoff = datetime.now(UTC).timestamp() - 24 * 3600
+            result = [
+                r for r in result
+                if r.get("tier") != "SESSION"
+                or _iso_to_epoch(r.get("created_at")) >= cutoff
+            ]
+
+        return result
 
     def get_last_published_date(self) -> str | None:
         """Return the most recent report_date with a published signal."""

@@ -5,19 +5,22 @@ This is NOT a judgment call. It's a safety net for when the LLM makes
 a math error or hallucinates. If validation fails, the proposal is
 rejected with a clear reason.
 
+Entry is the snapshot price at publish time, not an LLM-chosen zone.
+The pipeline passes ``current_price`` alongside the proposal so all
+distance/RR math is anchored to the price the operator actually sees.
+
 Checks:
   - No SHORT direction (spot only)
   - SL < entry < TP (basic directional sanity)
   - SL not more than 15% below entry (prevents absurd stops)
   - TP not more than 50% above entry (prevents fantasy targets)
   - R:R >= 1.5 hard floor (business integrity)
-  - R:R math verification (recalculate from LLM's numbers)
 
 Usage::
 
     from tenth_floor.validation import validate_proposal
 
-    result = validate_proposal(proposal)
+    result = validate_proposal(proposal, current_price=snapshot.current_price)
     if result.valid:
         # proceed
     else:
@@ -48,18 +51,20 @@ class ValidationResult:
     reward_risk_ratio: float
 
 
-def validate_proposal(proposal: TradeProposal) -> ValidationResult:
-    """Validate a TradeProposal for sanity.
+def validate_proposal(
+    proposal: TradeProposal,
+    *,
+    current_price: float,
+) -> ValidationResult:
+    """Validate a TradeProposal for sanity against the live price.
 
     Parameters
     ----------
     proposal:
         A TradeProposal from TradeAnalyst.
-
-    Returns
-    -------
-    ValidationResult
-        Whether the proposal is valid and the computed R:R.
+    current_price:
+        The snapshot price the trade fills at — anchors all distance
+        and R:R math.
     """
     symbol = proposal.symbol
 
@@ -75,24 +80,29 @@ def validate_proposal(proposal: TradeProposal) -> ValidationResult:
             reward_risk_ratio=0.0,
         )
 
-    entry_mid = (proposal.entry_zone_low + proposal.entry_zone_high) / 2
-
-    # Rule 2: SL < entry < TP
-    if proposal.stop_loss >= entry_mid:
+    if current_price <= 0:
         return ValidationResult(
             valid=False,
-            reason=f"{symbol}: SL ({proposal.stop_loss}) >= entry ({entry_mid})",
+            reason=f"{symbol}: current_price ({current_price}) must be > 0",
             reward_risk_ratio=0.0,
         )
-    if proposal.take_profit <= entry_mid:
+
+    # Rule 2: SL < entry < TP
+    if proposal.stop_loss >= current_price:
         return ValidationResult(
             valid=False,
-            reason=f"{symbol}: TP ({proposal.take_profit}) <= entry ({entry_mid})",
+            reason=f"{symbol}: SL ({proposal.stop_loss}) >= entry ({current_price})",
+            reward_risk_ratio=0.0,
+        )
+    if proposal.take_profit <= current_price:
+        return ValidationResult(
+            valid=False,
+            reason=f"{symbol}: TP ({proposal.take_profit}) <= entry ({current_price})",
             reward_risk_ratio=0.0,
         )
 
     # Rule 3: SL not too far below entry
-    sl_distance_pct = (entry_mid - proposal.stop_loss) / entry_mid
+    sl_distance_pct = (current_price - proposal.stop_loss) / current_price
     if sl_distance_pct > _MAX_SL_PCT:
         return ValidationResult(
             valid=False,
@@ -104,7 +114,7 @@ def validate_proposal(proposal: TradeProposal) -> ValidationResult:
         )
 
     # Rule 4: TP not too far above entry
-    tp_distance_pct = (proposal.take_profit - entry_mid) / entry_mid
+    tp_distance_pct = (proposal.take_profit - current_price) / current_price
     if tp_distance_pct > _MAX_TP_PCT:
         return ValidationResult(
             valid=False,
@@ -116,8 +126,8 @@ def validate_proposal(proposal: TradeProposal) -> ValidationResult:
         )
 
     # Rule 5: R:R verification
-    risk = entry_mid - proposal.stop_loss
-    reward = proposal.take_profit - entry_mid
+    risk = current_price - proposal.stop_loss
+    reward = proposal.take_profit - current_price
     computed_rr = round(reward / risk, 2) if risk > 0 else 0.0
 
     if computed_rr < _MIN_RR:
@@ -125,17 +135,6 @@ def validate_proposal(proposal: TradeProposal) -> ValidationResult:
             valid=False,
             reason=(
                 f"{symbol}: R:R {computed_rr:.2f} below minimum {_MIN_RR:.1f}"
-            ),
-            reward_risk_ratio=computed_rr,
-        )
-
-    # Rule 6: entry_zone_low < entry_zone_high
-    if proposal.entry_zone_low >= proposal.entry_zone_high:
-        return ValidationResult(
-            valid=False,
-            reason=(
-                f"{symbol}: entry_zone_low ({proposal.entry_zone_low}) "
-                f">= entry_zone_high ({proposal.entry_zone_high})"
             ),
             reward_risk_ratio=computed_rr,
         )

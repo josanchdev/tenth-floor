@@ -33,10 +33,12 @@ services:
       retries: 60       # 60 × 10s = 10 min max wait (first run downloads weights)
       start_period: 30s # Give vLLM time to start before health checks begin
 
-  # ─── Pipeline ────────────────────────────────────────────────────────────────
-  # Runs once after vLLM is healthy, then exits.
-  # docker compose up --abort-on-container-exit tears down vLLM when this exits.
-  pipeline:
+  # ─── FastAPI backend + dashboard ─────────────────────────────────────────────
+  # Long-running HTTP + WebSocket server. Pipeline runs are spawned in background
+  # threads via POST /runs from the dashboard button. vLLM lifecycle management
+  # from the dashboard (/llm/start · /llm/stop) is a local-dev path only — in
+  # Docker, vLLM is managed by compose itself via the `vllm` service above.
+  api:
     build:
       context: .
       dockerfile: Dockerfile
@@ -48,8 +50,43 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
-      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
-      DISCORD_TWEET_WEBHOOK_URL: ${DISCORD_TWEET_WEBHOOK_URL:-}
+      TENTH_FLOOR_ROOT: /app
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    expose:
+      - "8765"
+    command: >
+      uvicorn tenth_floor.api.app:app
+      --host 0.0.0.0
+      --port 8765
+
+  # ─── Dashboard (nginx serving the Vite bundle) ───────────────────────────────
+  # Proxies /api and /ws to the `api` service over the compose network.
+  dashboard:
+    build:
+      context: ./dashboard
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+
+  # ─── One-shot CLI pipeline (dev/debug only) ─────────────────────────────────
+  # Dashboard button is the operational path; this service remains for headless
+  # CLI runs. `docker compose run --rm pipeline` to use it.
+  pipeline:
+    profiles: ["cli"]  # only starts when explicitly selected with `--profile cli`
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      vllm:
+        condition: service_healthy
+    environment:
+      LLM_BASE_URL: http://vllm:8000/v1
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
       TENTH_FLOOR_ROOT: /app
       PIPELINE_ARGS: ${PIPELINE_ARGS:-}
     volumes:

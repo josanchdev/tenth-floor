@@ -71,11 +71,9 @@ def _make_proposal(symbol: str = "BTCUSDT", **kw) -> TradeProposal:
         "timeframe": "1d",
         "action": SetupAction.BUY,
         "direction": SignalDirection.LONG,
-        "entry_zone_low": 61_800.0,
-        "entry_zone_high": 62_200.0,
+        "entry_price": 62_000.0,
         "stop_loss": 61_000.0,
         "take_profit": 64_000.0,
-        "confidence": 0.82,
         "rationale": "Strong setup.",
         "confluence_factors": ["EMA alignment"],
         "risk_factors": [],
@@ -89,6 +87,7 @@ def _make_reviewed(symbol: str = "BTCUSDT", **kw) -> ReviewedSignal:
         "symbol": symbol,
         "verdict": ReviewVerdict.APPROVE,
         "conviction": "high",
+        "confidence": 0.82,
         "reasoning": "Strong setup.",
         "risk_notes": "",
     }
@@ -104,8 +103,7 @@ def _make_entry(symbol: str = "BTCUSDT", **kw) -> PlaybookEntry:
         "verdict": PlaybookVerdict.APPROVED,
         "verdict_reasoning": "Meets threshold",
         "direction": SignalDirection.LONG,
-        "entry_zone_low": 61_800.0,
-        "entry_zone_high": 62_200.0,
+        "entry_price": 62_000.0,
         "stop_loss": 61_000.0,
         "take_profit": 64_000.0,
         "reward_risk_ratio": 2.5,
@@ -146,6 +144,12 @@ def _build_patches(
 
     mock_fetcher = MagicMock()
     mock_fetcher.fetch_universe.return_value = {"BTCUSDT": {"1d": _make_ohlcv_df()}}
+    # Re-snap step asks for a live price for each survivor — return the
+    # snapshot's current_price so validation passes unchanged.
+    mock_fetcher.fetch_last_price.return_value = 62_000.0
+
+    mock_yf = MagicMock()
+    mock_yf.fetch_last_price.return_value = 62_000.0
 
     mock_sentiment = MagicMock()
     mock_sentiment.fetch_snapshot.return_value = SentimentSnapshot(
@@ -175,19 +179,15 @@ def _build_patches(
     mock_signal_logger.__enter__ = MagicMock(return_value=mock_signal_logger)
     mock_signal_logger.__exit__ = MagicMock(return_value=False)
 
-    mock_notifier = MagicMock()
-    mock_notifier.post.return_value = True
-
     patches = {
         f"{_PATCH_BASE}.MarketDataFetcher": MagicMock(return_value=mock_fetcher),
-        f"{_PATCH_BASE}.YFinanceDataFetcher": MagicMock(return_value=MagicMock()),
+        f"{_PATCH_BASE}.YFinanceDataFetcher": MagicMock(return_value=mock_yf),
         f"{_PATCH_BASE}.SentimentFetcher": MagicMock(return_value=mock_sentiment),
         f"{_PATCH_BASE}.SnapshotBuilder": MagicMock(return_value=mock_builder),
         f"{_PATCH_BASE}.MacroAnalyst": MagicMock(return_value=mock_macro_analyst),
         f"{_PATCH_BASE}.TradeAnalyst": MagicMock(return_value=mock_trade_analyst),
         f"{_PATCH_BASE}.RiskReviewer": MagicMock(return_value=mock_risk_reviewer),
         f"{_PATCH_BASE}.SignalLogger": MagicMock(return_value=mock_signal_logger),
-        f"{_PATCH_BASE}.DiscordNotifier": MagicMock(return_value=mock_notifier),
         f"{_PATCH_BASE}._fetch_macro_indicators": MagicMock(return_value=(None, None)),
     }
 
@@ -199,7 +199,6 @@ def _build_patches(
         "trade_analyst": mock_trade_analyst,
         "risk_reviewer": mock_risk_reviewer,
         "signal_logger": mock_signal_logger,
-        "notifier": mock_notifier,
     }
 
     return patches, mocks
@@ -245,19 +244,11 @@ class TestPipelineFlow:
         mocks["signal_logger"].log.assert_called_once()
         mocks["signal_logger"].open_signal_count.assert_called_once()
 
-    def test_posts_to_discord(self):
-        _, mocks = _run_with_patches()
-
-        mocks["notifier"].post.assert_called_once()
-        call_kwargs = mocks["notifier"].post.call_args
-        assert call_kwargs.kwargs["open_count"] == 3
-
-    def test_dry_run_skips_db_and_discord(self):
+    def test_dry_run_skips_db(self):
         entries, mocks = _run_with_patches(dry_run=True)
 
         assert len(entries) == 1
         mocks["signal_logger"].log.assert_not_called()
-        mocks["notifier"].post.assert_not_called()
 
     def test_empty_snapshots_returns_empty(self):
         entries, _ = _run_with_patches(snapshots=[])
@@ -349,8 +340,8 @@ class TestSignalCap:
     """Signal cap limits daily output to max_daily_signals."""
 
     def test_caps_to_configured_max(self):
-        """More approved signals than max → capped."""
-        proposals = [_make_proposal(symbol=f"P{i}USDT", confidence=0.65 + i * 0.02) for i in range(5)]
+        """More approved signals than max → top-N PUBLISHED, rest SESSION."""
+        proposals = [_make_proposal(symbol=f"P{i}USDT") for i in range(5)]
         reviewed = [_make_reviewed(symbol=f"P{i}USDT") for i in range(5)]
         snaps = [_make_snapshot(symbol=f"P{i}USDT") for i in range(5)]
 
@@ -368,11 +359,12 @@ class TestSignalCap:
             for cm in ctx_managers:
                 cm.stop()
 
-        # Should cap to 2
-        notifier = mocks["notifier"]
-        notifier.post.assert_called_once()
-        posted = notifier.post.call_args[0][0]
-        assert len(posted) <= 2
+        # All 5 are persisted; the split is 2 PUBLISHED + 3 SESSION.
+        log_mock = mocks["signal_logger"].log
+        assert log_mock.call_count == 5
+        tiers = [call.kwargs.get("tier") for call in log_mock.call_args_list]
+        assert tiers.count("PUBLISHED") == 2
+        assert tiers.count("SESSION") == 3
 
 
 class TestCLI:

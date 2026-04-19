@@ -1,5 +1,5 @@
 {
-  "max_daily_signals": 2,
+  "max_daily_signals": 5,
   "conviction_tiers": {
     "high": {
       "min_confidence": 0.80,

@@ -1,14 +1,17 @@
 """
-Outcome checker — walks 4h candles to resolve PENDING/OPEN signals.
+Outcome checker — walks candles to resolve OPEN signals.
 
 Standalone script that runs independently from the main LLM pipeline.
 No LLM calls, no expensive agent invocations — just candle data + DB updates.
 
 Signal lifecycle:
-  PENDING → OPEN:    candle low ≤ entry_high (price entered entry zone)
-  OPEN    → HIT_TP:  candle high ≥ take_profit
-  OPEN    → HIT_SL:  candle low ≤ stop_loss (assumed first on same-candle ambiguity)
-  any     → EXPIRED: 14 calendar days with no resolution
+  OPEN → HIT_TP:  candle high ≥ take_profit
+  OPEN → HIT_SL:  candle low ≤ stop_loss (assumed first on same-candle ambiguity)
+  OPEN → EXPIRED: 14 calendar days with no resolution
+
+A signal is born OPEN at the snapshot price the operator saw on the
+dashboard. There is no PENDING tier and no entry zone — see migration
+003_drop_entry_zone_and_pending for context.
 
 Usage::
 
@@ -27,7 +30,8 @@ import pandas as pd
 from tenth_floor.data.market_data import MarketDataFetcher
 from tenth_floor.data.yfinance_data import YFinanceDataFetcher
 from tenth_floor.db.signal_logger import SignalLogger
-from tenth_floor.notifications.discord_notifier import DiscordNotifier
+from tenth_floor.events import EventType, event_bus
+from tenth_floor.notifications.notion_journal import update_signal_outcome
 from tenth_floor.universe import load_universe
 
 logger = logging.getLogger(__name__)
@@ -39,9 +43,9 @@ _EXPIRY_DAYS = 14
 def check_outcomes(
     db_path: Path | str | None = None,
     fetcher: MarketDataFetcher | None = None,
-    notifier: DiscordNotifier | None = None,
     expiry_days: int = _EXPIRY_DAYS,
     dry_run: bool = False,
+    run_id: str | None = None,
 ) -> dict:
     """Walk candles for all active signals and update their status.
 
@@ -55,12 +59,15 @@ def check_outcomes(
         Override DB path (useful for testing).
     fetcher:
         Override MarketDataFetcher for crypto (useful for testing).
-    notifier:
-        Override DiscordNotifier (useful for testing).
     expiry_days:
         Days after which unresolved signals expire.
     dry_run:
         If True, log what would happen but don't write to DB.
+    run_id:
+        When provided, emit ``outcome_check_*`` and ``outcome_resolved``
+        events to the shared event bus under this run id. The API layer
+        passes the pipeline's run id so the dashboard sees the pipeline
+        and the outcome check as a single live stream.
 
     Returns
     -------
@@ -70,20 +77,29 @@ def check_outcomes(
     sig_logger = SignalLogger(db_path)
     if fetcher is None:
         fetcher = MarketDataFetcher()
-    if notifier is None:
-        notifier = DiscordNotifier()
 
     universe = load_universe()
     yf_fetcher = YFinanceDataFetcher()
 
     active = sig_logger.get_active_signals()
+
+    if run_id is not None:
+        event_bus.emit(
+            run_id,
+            EventType.OUTCOME_CHECK_STARTED,
+            {"active_count": len(active), "dry_run": dry_run},
+        )
+
     if not active:
         logger.info("No active signals to check")
-        return {"checked": 0, "entered": 0, "tp_hit": 0, "sl_hit": 0, "expired": 0}
+        summary = {"checked": 0, "tp_hit": 0, "sl_hit": 0, "expired": 0}
+        if run_id is not None:
+            event_bus.emit(run_id, EventType.OUTCOME_CHECK_COMPLETE, {"summary": summary})
+        return summary
 
     logger.info("Checking outcomes for %d active signals", len(active))
 
-    summary = {"checked": len(active), "entered": 0, "tp_hit": 0, "sl_hit": 0, "expired": 0}
+    summary = {"checked": len(active), "tp_hit": 0, "sl_hit": 0, "expired": 0}
 
     # Group signals by pair to avoid re-fetching the same candles
     pairs = {s["pair"] for s in active}
@@ -116,13 +132,24 @@ def check_outcomes(
         if result is None:
             continue  # no state change
 
+        status = result.get("status", "")
+
         if not dry_run:
             sig_logger.update_signal(signal["signal_id"], **result)
+            if status in ("HIT_TP", "HIT_SL", "EXPIRED"):
+                notion_page_id = signal.get("notion_page_id")
+                if notion_page_id:
+                    update_signal_outcome(
+                        notion_page_id,
+                        status=status,
+                        outcome_price=result.get("outcome_price"),
+                        outcome_date=result.get("outcome_date"),
+                        mae=result.get("max_adverse_excursion"),
+                        mfe=result.get("max_favorable_excursion"),
+                        entry_price=signal.get("entry_price"),
+                    )
 
-        status = result.get("status", "")
-        if status == "OPEN":
-            summary["entered"] += 1
-        elif status == "HIT_TP":
+        if status == "HIT_TP":
             summary["tp_hit"] += 1
         elif status == "HIT_SL":
             summary["sl_hit"] += 1
@@ -134,15 +161,28 @@ def check_outcomes(
             signal["signal_id"], status, pair, result.get("outcome_price"),
         )
 
-        # Post resolution to Discord (not for OPEN transitions or dry runs)
-        if not dry_run and status in ("HIT_TP", "HIT_SL", "EXPIRED"):
-            notifier.post_outcome({**signal, **result})
+        if run_id is not None:
+            event_bus.emit(
+                run_id,
+                EventType.OUTCOME_RESOLVED,
+                {
+                    "signal_id": signal["signal_id"],
+                    "pair": pair,
+                    "status": status,
+                    "outcome_price": result.get("outcome_price"),
+                    "outcome_date": result.get("outcome_date"),
+                },
+            )
 
     logger.info(
-        "Outcome check complete  checked=%d  entered=%d  tp=%d  sl=%d  expired=%d",
-        summary["checked"], summary["entered"],
+        "Outcome check complete  checked=%d  tp=%d  sl=%d  expired=%d",
+        summary["checked"],
         summary["tp_hit"], summary["sl_hit"], summary["expired"],
     )
+
+    if run_id is not None:
+        event_bus.emit(run_id, EventType.OUTCOME_CHECK_COMPLETE, {"summary": summary})
+
     return summary
 
 
@@ -153,6 +193,10 @@ def _process_signal(
 ) -> dict | None:
     """Walk candles chronologically and determine signal outcome.
 
+    The signal opens at ``entry_price`` on its creation date. We walk
+    forward looking for SL or TP first, with SL winning on same-candle
+    ambiguity (conservative).
+
     Returns
     -------
     dict | None
@@ -162,10 +206,9 @@ def _process_signal(
     created_ts = int(created_at.timestamp() * 1000)
     now = datetime.now(UTC)
 
-    entry_high = signal["entry_high"]
+    entry_price = signal["entry_price"]
     stop_loss = signal["stop_loss"]
     take_profit = signal["take_profit"]
-    status = signal["status"]
 
     # Filter candles to those after signal creation
     if candles.empty:
@@ -182,9 +225,6 @@ def _process_signal(
             }
         return None
 
-    # Entry price for MAE/MFE calculation (worst-case fill for LONG)
-    entry_price = entry_high
-
     # Track MAE (lowest low) and MFE (highest high) while OPEN
     mae_price = entry_price
     mfe_price = entry_price
@@ -194,68 +234,38 @@ def _process_signal(
         candle_high = row.high
         candle_ts = datetime.fromtimestamp(row.timestamp / 1000, tz=UTC)
 
-        if status == "PENDING":
-            # Check if price entered entry zone
-            if candle_low <= entry_high:
-                status = "OPEN"
-                entered_at = candle_ts.isoformat()
-                # Don't return yet — continue walking to check TP/SL in same candle
-            else:
-                # Check expiry for PENDING signals too
-                if (candle_ts - created_at) >= timedelta(days=expiry_days):
-                    return {
-                        "status": "EXPIRED",
-                        "outcome_date": candle_ts.isoformat(),
-                    }
-                continue
+        mae_price = min(mae_price, candle_low)
+        mfe_price = max(mfe_price, candle_high)
 
-        if status == "OPEN":
-            # Track MAE/MFE
-            mae_price = min(mae_price, candle_low)
-            mfe_price = max(mfe_price, candle_high)
+        # Check SL first (conservative — on same-candle ambiguity, SL wins)
+        if candle_low <= stop_loss:
+            return {
+                "status": "HIT_SL",
+                "outcome_price": stop_loss,
+                "outcome_date": candle_ts.isoformat(),
+                "max_adverse_excursion": mae_price,
+                "max_favorable_excursion": mfe_price,
+            }
 
-            # Check SL first (conservative — on same-candle ambiguity, SL wins)
-            if candle_low <= stop_loss:
-                return {
-                    "status": "HIT_SL",
-                    "entered_at": signal.get("entered_at") or entered_at,  # type: ignore[possibly-undefined]
-                    "outcome_price": stop_loss,
-                    "outcome_date": candle_ts.isoformat(),
-                    "max_adverse_excursion": mae_price,
-                    "max_favorable_excursion": mfe_price,
-                }
+        if candle_high >= take_profit:
+            return {
+                "status": "HIT_TP",
+                "outcome_price": take_profit,
+                "outcome_date": candle_ts.isoformat(),
+                "max_adverse_excursion": mae_price,
+                "max_favorable_excursion": mfe_price,
+            }
 
-            if candle_high >= take_profit:
-                return {
-                    "status": "HIT_TP",
-                    "entered_at": signal.get("entered_at") or entered_at,  # type: ignore[possibly-undefined]
-                    "outcome_price": take_profit,
-                    "outcome_date": candle_ts.isoformat(),
-                    "max_adverse_excursion": mae_price,
-                    "max_favorable_excursion": mfe_price,
-                }
+        if (candle_ts - created_at) >= timedelta(days=expiry_days):
+            return {
+                "status": "EXPIRED",
+                "outcome_date": candle_ts.isoformat(),
+                "max_adverse_excursion": mae_price,
+                "max_favorable_excursion": mfe_price,
+            }
 
-            # Check expiry
-            if (candle_ts - created_at) >= timedelta(days=expiry_days):
-                return {
-                    "status": "EXPIRED",
-                    "entered_at": signal.get("entered_at") or entered_at,  # type: ignore[possibly-undefined]
-                    "outcome_date": candle_ts.isoformat(),
-                    "max_adverse_excursion": mae_price,
-                    "max_favorable_excursion": mfe_price,
-                }
-
-    # Signal transitioned to OPEN but no TP/SL/expiry yet
-    if status == "OPEN" and signal["status"] == "PENDING":
-        return {
-            "status": "OPEN",
-            "entered_at": entered_at,  # type: ignore[possibly-undefined]
-            "max_adverse_excursion": mae_price,
-            "max_favorable_excursion": mfe_price,
-        }
-
-    # Still OPEN from before, just update MAE/MFE
-    if status == "OPEN" and signal["status"] == "OPEN" and (
+    # Still OPEN — only emit an update if MAE/MFE moved.
+    if (
         mae_price != signal.get("max_adverse_excursion")
         or mfe_price != signal.get("max_favorable_excursion")
     ):
@@ -297,7 +307,6 @@ def _cli_main() -> None:
 
     console.print("\n[bold]Results:[/bold]")
     console.print(f"  Checked:  {summary['checked']}")
-    console.print(f"  Entered:  {summary['entered']}")
     console.print(f"  TP hit:   {summary['tp_hit']}")
     console.print(f"  SL hit:   {summary['sl_hit']}")
     console.print(f"  Expired:  {summary['expired']}")

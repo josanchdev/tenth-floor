@@ -16,7 +16,7 @@ Usage::
 
     python -m tenth_floor.main                    # full universe
     python -m tenth_floor.main BTCUSDT AAPL       # specific symbols
-    python -m tenth_floor.main --dry-run           # skip Discord + DB
+    python -m tenth_floor.main --dry-run           # skip SQLite writes
     python -m tenth_floor.main --asset-class crypto # crypto only
 """
 
@@ -25,8 +25,13 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import threading
 
 from tenth_floor.agents.base import load_risk_profile, set_active_profile
 from tenth_floor.agents.macro_analyst import MacroAnalyst
@@ -39,13 +44,16 @@ from tenth_floor.data.models import (
     PlaybookEntry,
     PlaybookVerdict,
     ReviewVerdict,
+    SetupAction,
     TradeProposal,
 )
 from tenth_floor.data.sentiment import SentimentFetcher
 from tenth_floor.data.yfinance_data import YFinanceDataFetcher
 from tenth_floor.db.signal_logger import SignalLogger
+from tenth_floor.events import EventType, event_bus
 from tenth_floor.features.pair_snapshot import SnapshotBuilder
-from tenth_floor.notifications.discord_notifier import DiscordNotifier
+from tenth_floor.notifications.discord_notifier import publish_playbook
+from tenth_floor.notifications.notion_journal import create_signal_entry
 from tenth_floor.universe import Universe, load_universe
 from tenth_floor.validation import validate_proposal
 
@@ -61,6 +69,21 @@ except ImportError:  # pragma: no cover
         return _noop
 
 logger = logging.getLogger(__name__)
+
+
+class PipelineCancelled(Exception):
+    """Raised when the dashboard asks the run manager to cancel an in-flight run.
+
+    Cooperative cancellation — ``run_pipeline`` checks the ``cancel_event``
+    at phase boundaries and inside the per-asset TradeAnalyst loop. Worst-case
+    latency is one in-flight LLM call (30–60s on a 3090).
+    """
+
+
+def _check_cancel(cancel_event: threading.Event | None) -> None:
+    """Raise :class:`PipelineCancelled` if cancellation has been requested."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise PipelineCancelled()
 
 
 @dataclass
@@ -257,12 +280,96 @@ def _pre_screen(snapshots: list, funnel: FunnelTracker) -> list:
     return passed
 
 
+def _resnap_published_entries(
+    approved: list[PlaybookEntry],
+    universe: Universe,
+    run_id: str,
+) -> list[PlaybookEntry]:
+    """Refetch the live price for each survivor and re-anchor the entry.
+
+    The original snapshot was taken before ~30 sequential LLM calls and
+    can be many minutes stale. We only do this for the small set that
+    will actually be persisted, so the extra ticker calls are cheap.
+
+    If the live price has crossed SL or TP, or has pushed R:R below
+    1.5, the entry is dropped — the trade is no longer the one the
+    analyst proposed.
+    """
+    if not approved:
+        return approved
+
+    ccxt_fetcher: MarketDataFetcher | None = None
+    yf_fetcher: YFinanceDataFetcher | None = None
+
+    survivors: list[PlaybookEntry] = []
+    for entry in approved:
+        try:
+            data_source = universe.data_source_for(entry.symbol)
+        except KeyError:
+            data_source = "ccxt"
+
+        try:
+            if data_source == "yfinance":
+                if yf_fetcher is None:
+                    yf_fetcher = YFinanceDataFetcher()
+                live_price = yf_fetcher.fetch_last_price(entry.symbol)
+            else:
+                if ccxt_fetcher is None:
+                    ccxt_fetcher = MarketDataFetcher()
+                live_price = ccxt_fetcher.fetch_last_price(entry.symbol)
+        except Exception:
+            logger.exception(
+                "Re-snap failed for %s — keeping original entry_price", entry.symbol,
+            )
+            survivors.append(entry)
+            continue
+
+        # Re-validate against the new price.
+        proposal = TradeProposal(
+            symbol=entry.symbol,
+            timeframe=entry.timeframe,
+            action=SetupAction.BUY,
+            direction=entry.direction,
+            entry_price=live_price,
+            stop_loss=entry.stop_loss,
+            take_profit=entry.take_profit,
+            rationale=entry.rationale,
+        )
+        result = validate_proposal(proposal, current_price=live_price)
+        if not result.valid:
+            logger.warning(
+                "Re-snap DROPPED  %s  old=%.4f  live=%.4f  reason=%s",
+                entry.symbol, entry.entry_price, live_price, result.reason,
+            )
+            event_bus.emit(run_id, EventType.VALIDATION_RESULT, {
+                "symbol": entry.symbol,
+                "passed": False,
+                "reason": f"resnap: {result.reason}",
+            })
+            continue
+
+        drift_pct = (live_price - entry.entry_price) / entry.entry_price * 100
+        logger.info(
+            "Re-snap %s  old=%.4f  live=%.4f  drift=%+.2f%%  RR=%.2f",
+            entry.symbol, entry.entry_price, live_price, drift_pct,
+            result.reward_risk_ratio,
+        )
+        survivors.append(entry.model_copy(update={
+            "entry_price": live_price,
+            "reward_risk_ratio": result.reward_risk_ratio,
+        }))
+
+    return survivors
+
+
 @lf_observe(name="daily_pipeline")
 def run_pipeline(
     symbols: list[str] | None = None,
     *,
     dry_run: bool = False,
     asset_class: str | None = None,
+    run_id: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> list[PlaybookEntry]:
     """Execute the full daily pipeline.
 
@@ -271,9 +378,17 @@ def run_pipeline(
     symbols:
         Override the universe. ``None`` uses ``config/universe.json``.
     dry_run:
-        If ``True``, skip SQLite logging and Discord posting.
+        If ``True``, skip SQLite logging.
     asset_class:
         Filter universe to a single asset class (e.g. "crypto", "equity").
+    run_id:
+        Externally-generated run id used by the dashboard to route events
+        to the right WebSocket. Generated automatically if not provided.
+    cancel_event:
+        Optional ``threading.Event`` that the pipeline checks at phase
+        boundaries. When set, the current phase finishes its in-flight
+        LLM call and then :class:`PipelineCancelled` is raised so the
+        run manager can emit ``pipeline_cancelled``.
 
     Returns
     -------
@@ -281,19 +396,71 @@ def run_pipeline(
         All approved entries for today.
     """
     today = datetime.now(UTC).strftime("%Y-%m-%d")
-    logger.info("=== THE TENTH FLOOR — daily run %s ===", today)
+    if run_id is None:
+        run_id = event_bus.new_run_id()
+    started_at = time.monotonic()
+
+    logger.info("=== THE TENTH FLOOR — daily run %s (run_id=%s) ===", today, run_id)
     funnel = FunnelTracker()
     risk_profile = load_risk_profile()
 
-    # ── Load universe ─────────────────────────────────────────────
-    universe = load_universe()
-    if symbols is None:
-        symbols = universe.symbols(asset_class=asset_class)
-    funnel.assets_in_universe = len(symbols)
-    logger.info("Universe: %d symbols%s", len(symbols),
-                f" (asset_class={asset_class})" if asset_class else "")
+    try:
+        # ── Load universe ─────────────────────────────────────────────
+        universe = load_universe()
+        if symbols is None:
+            symbols = universe.symbols(asset_class=asset_class)
+        funnel.assets_in_universe = len(symbols)
+        logger.info("Universe: %d symbols%s", len(symbols),
+                    f" (asset_class={asset_class})" if asset_class else "")
+
+        event_bus.emit(run_id, EventType.PIPELINE_STARTED, {
+            "today": today,
+            "total_assets": len(symbols),
+            "asset_class": asset_class,
+            "dry_run": dry_run,
+            "max_daily_signals": risk_profile.get("max_daily_signals", 3),
+        })
+
+        return _run_pipeline_body(
+            run_id=run_id,
+            today=today,
+            started_at=started_at,
+            symbols=symbols,
+            universe=universe,
+            funnel=funnel,
+            risk_profile=risk_profile,
+            dry_run=dry_run,
+            cancel_event=cancel_event,
+        )
+    except PipelineCancelled:
+        # Cancellation is operator-initiated, not a crash. The runner
+        # thread emits ``pipeline_cancelled`` — we just unwind cleanly.
+        logger.info("Pipeline cancelled by operator (run_id=%s)", run_id)
+        raise
+    except Exception as exc:
+        event_bus.emit(run_id, EventType.PIPELINE_ERROR, {
+            "error_type": type(exc).__name__,
+            "message": str(exc),
+        })
+        raise
+
+
+def _run_pipeline_body(
+    *,
+    run_id: str,
+    today: str,
+    started_at: float,
+    symbols: list[str],
+    universe: Universe,
+    funnel: FunnelTracker,
+    risk_profile: dict,
+    dry_run: bool,
+    cancel_event: threading.Event | None = None,
+) -> list[PlaybookEntry]:
+    """Pipeline body — extracted so the outer wrapper can emit error events."""
 
     # ── 1. Fetch market data ────────────────────────────────────────
+    _check_cancel(cancel_event)
     logger.info("Step 1/9: Fetching OHLCV data")
     ohlcv_data = _fetch_all_ohlcv(universe, symbols)
     funnel.assets_fetched = len(ohlcv_data)
@@ -327,6 +494,7 @@ def run_pipeline(
     logger.info("Built %d snapshots", len(snapshots))
 
     # ── 4. MacroAnalyst ─────────────────────────────────────────────
+    _check_cancel(cancel_event)
     logger.info("Step 4/9: Running MacroAnalyst")
     macro_analyst = MacroAnalyst()
     try:
@@ -340,7 +508,26 @@ def run_pipeline(
         )
     except Exception:
         logger.exception("MacroAnalyst failed — aborting pipeline")
+        event_bus.emit(run_id, EventType.PIPELINE_COMPLETE, {
+            "published_count": 0,
+            "funnel": funnel.summary_lines(),
+            "elapsed_seconds": round(time.monotonic() - started_at, 2),
+            "aborted": True,
+            "abort_reason": "macro_analyst_failed",
+        })
         return []
+
+    event_bus.emit(run_id, EventType.MACRO_COMPLETE, {
+        "regime": macro_signal.regime.value,
+        "fear_greed_value": macro_signal.fear_greed_value,
+        "vix_level": macro_signal.vix_level,
+        "dxy_trend": macro_signal.dxy_trend,
+        "asset_class_impacts": [
+            {"asset_class": i.asset_class, "outlook": i.outlook, "reasoning": i.reasoning}
+            for i in macro_signal.asset_class_impacts
+        ],
+        "regime_reasoning": macro_signal.regime_reasoning,
+    })
 
     # ── 5. Pre-screen ───────────────────────────────────────────────
     logger.info("Step 5/9: Pre-screening %d snapshots", len(snapshots))
@@ -351,11 +538,13 @@ def run_pipeline(
     )
 
     # ── 6. TradeAnalyst ─────────────────────────────────────────────
+    _check_cancel(cancel_event)
     logger.info("Step 6/9: Running TradeAnalyst on %d candidates", len(candidates))
     trade_analyst = TradeAnalyst()
     buy_proposals: list[TradeProposal] = []
 
     for snap in candidates:
+        _check_cancel(cancel_event)
         try:
             proposal = trade_analyst.run(snap, macro_signal)
 
@@ -363,24 +552,44 @@ def run_pipeline(
                 buy_proposals.append(proposal)
                 funnel.trade_analyst_buy += 1
                 logger.info(
-                    "TradeAnalyst BUY  %s  conf=%.2f  entry=%.4f–%.4f  "
-                    "SL=%.4f  TP=%.4f",
-                    proposal.symbol, proposal.confidence,
-                    proposal.entry_zone_low, proposal.entry_zone_high,
+                    "TradeAnalyst BUY  %s  entry=%.4f  SL=%.4f  TP=%.4f",
+                    proposal.symbol,
+                    proposal.entry_price,
                     proposal.stop_loss, proposal.take_profit,
                 )
+                event_bus.emit(run_id, EventType.ASSET_ANALYZED, {
+                    "symbol": proposal.symbol,
+                    "asset_class": universe.asset_class_for(proposal.symbol),
+                    "action": "buy",
+                    "entry_price": proposal.entry_price,
+                    "stop_loss": proposal.stop_loss,
+                    "take_profit": proposal.take_profit,
+                    "rationale": proposal.rationale,
+                })
             else:
                 funnel.trade_analyst_skip += 1
                 logger.info(
-                    "TradeAnalyst SKIP  %s  conf=%.2f  reason=%s",
-                    proposal.symbol, proposal.confidence,
+                    "TradeAnalyst SKIP  %s  reason=%s",
+                    proposal.symbol,
                     proposal.rationale[:100],
                 )
-        except Exception:
+                event_bus.emit(run_id, EventType.ASSET_ANALYZED, {
+                    "symbol": proposal.symbol,
+                    "asset_class": universe.asset_class_for(proposal.symbol),
+                    "action": "skip",
+                    "rationale": proposal.rationale,
+                })
+        except Exception as exc:
             logger.exception(
                 "TradeAnalyst failed for %s — skipping", snap.symbol,
             )
             funnel.trade_analyst_error += 1
+            event_bus.emit(run_id, EventType.ASSET_ANALYZED, {
+                "symbol": snap.symbol,
+                "asset_class": universe.asset_class_for(snap.symbol),
+                "action": "error",
+                "error": str(exc),
+            })
 
     logger.info(
         "TradeAnalyst done  buy=%d  skip=%d  error=%d",
@@ -393,15 +602,31 @@ def run_pipeline(
     valid_proposals: list[TradeProposal] = []
     validated_rr: dict[str, float] = {}
 
+    snap_by_symbol = {s.symbol: s for s in candidates}
     for proposal in buy_proposals:
-        result = validate_proposal(proposal)
+        snap = snap_by_symbol.get(proposal.symbol)
+        if snap is None:
+            funnel.validation_failed += 1
+            logger.warning("Validation FAIL  %s — no snapshot for proposal", proposal.symbol)
+            continue
+        result = validate_proposal(proposal, current_price=snap.current_price)
         if result.valid:
             valid_proposals.append(proposal)
             validated_rr[proposal.symbol] = result.reward_risk_ratio
             funnel.validation_passed += 1
+            event_bus.emit(run_id, EventType.VALIDATION_RESULT, {
+                "symbol": proposal.symbol,
+                "passed": True,
+                "reward_risk_ratio": result.reward_risk_ratio,
+            })
         else:
             funnel.validation_failed += 1
             logger.info("Validation FAIL  %s", result.reason)
+            event_bus.emit(run_id, EventType.VALIDATION_RESULT, {
+                "symbol": proposal.symbol,
+                "passed": False,
+                "reason": result.reason,
+            })
 
     logger.info(
         "Validation done  passed=%d  failed=%d",
@@ -414,9 +639,16 @@ def run_pipeline(
             [], funnel, today, sentiment_snapshot, dry_run, universe,
             macro_regime=macro_signal.regime.value,
         )
+        event_bus.emit(run_id, EventType.PIPELINE_COMPLETE, {
+            "published_count": 0,
+            "funnel": funnel.summary_lines(),
+            "elapsed_seconds": round(time.monotonic() - started_at, 2),
+            "aborted": False,
+        })
         return []
 
     # ── 8. RiskReviewer ─────────────────────────────────────────────
+    _check_cancel(cancel_event)
     logger.info("Step 8/9: Running RiskReviewer on %d valid proposals", len(valid_proposals))
     risk_reviewer = RiskReviewer()
 
@@ -458,12 +690,11 @@ def run_pipeline(
             verdict=verdict,
             verdict_reasoning=review.reasoning,
             direction=proposal.direction,
-            entry_zone_low=proposal.entry_zone_low,
-            entry_zone_high=proposal.entry_zone_high,
+            entry_price=proposal.entry_price,
             stop_loss=proposal.stop_loss,
             take_profit=proposal.take_profit,
             reward_risk_ratio=rr,
-            confidence_score=proposal.confidence,
+            confidence_score=review.confidence,
             conviction=review.conviction,
             suggested_risk_pct=risk_pct,
             rationale=proposal.rationale,
@@ -471,6 +702,15 @@ def run_pipeline(
             rank=1,  # will be re-ranked below
         )
         entries.append(entry)
+
+        event_bus.emit(run_id, EventType.REVIEWER_DECISION, {
+            "symbol": proposal.symbol,
+            "verdict": verdict.value,
+            "conviction": review.conviction.value if hasattr(review.conviction, "value") else str(review.conviction),
+            "confidence": review.confidence,
+            "reasoning": review.reasoning,
+            "risk_notes": review.risk_notes,
+        })
 
     approved = [e for e in entries if e.verdict == PlaybookVerdict.APPROVED]
     rejected = [e for e in entries if e.verdict != PlaybookVerdict.APPROVED]
@@ -495,22 +735,31 @@ def run_pipeline(
     max_signals = risk_profile.get("max_daily_signals", 3)
     approved.sort(key=_ranking_score, reverse=True)
 
+    session: list[PlaybookEntry] = []
     if len(approved) > max_signals:
         funnel.signal_cap_killed = len(approved) - max_signals
-        dropped = approved[max_signals:]
+        session = approved[max_signals:]
         approved = approved[:max_signals]
         logger.info(
-            "Signal cap: kept top %d, dropped %d (macro-aligned ranking)",
+            "Signal cap: kept top %d as PUBLISHED, %d → SESSION (macro-aligned ranking)",
             max_signals, funnel.signal_cap_killed,
         )
-        for d in dropped:
+        for d in session:
             logger.info(
-                "  dropped %s  conf=%.2f  macro_adj=%+.2f",
+                "  session %s  conf=%.2f  macro_adj=%+.2f",
                 d.symbol, d.confidence_score,
                 _macro_alignment_bonus(universe.asset_class_for(d.symbol), macro_signal),
             )
 
-    # Assign ranks (1 = top of macro-adjusted ranking)
+    # ── Re-snap entry_price for survivors ─────────────────────────
+    # The pipeline started with a single OHLCV fetch and then ran ~30
+    # sequential LLM calls. By the time we publish, that snapshot can
+    # be 5-15 minutes stale. For the small set of survivors we refetch
+    # the live price, then re-validate against SL/TP. If the market
+    # has moved past the stop or invalidated R:R, drop the entry.
+    approved = _resnap_published_entries(approved, universe, run_id)
+
+    # Assign ranks (1 = top of macro-adjusted ranking) AFTER any drops.
     for i, entry in enumerate(approved, 1):
         approved[i - 1] = entry.model_copy(update={"rank": i})
 
@@ -518,7 +767,16 @@ def run_pipeline(
     _finalize_pipeline(
         approved, funnel, today, sentiment_snapshot, dry_run, universe,
         macro_regime=macro_signal.regime.value,
+        session=session,
     )
+
+    event_bus.emit(run_id, EventType.PIPELINE_COMPLETE, {
+        "published_count": funnel.published,
+        "approved_count": len(approved),
+        "funnel": funnel.summary_lines(),
+        "elapsed_seconds": round(time.monotonic() - started_at, 2),
+        "aborted": False,
+    })
 
     logger.info("=== Pipeline complete ===")
     return approved
@@ -532,15 +790,17 @@ def _finalize_pipeline(
     dry_run: bool,
     universe: Universe,
     macro_regime: str | None = None,
+    session: list[PlaybookEntry] | None = None,
 ) -> None:
-    """Log funnel, persist signals, post to Discord."""
-    logger.info("Step 9/9: Logging signals and posting to Discord")
+    """Log funnel, persist signals to SQLite."""
+    logger.info("Step 9/9: Logging signals to SQLite")
+    session = session or []
 
     if dry_run:
         funnel.published = len(approved)
         funnel_header = f"Pipeline Funnel — {today}"
         logger.info("%s\n%s", funnel_header, "\n".join(funnel.summary_lines()))
-        logger.info("DRY RUN — skipping SQLite + Discord")
+        logger.info("DRY RUN — skipping SQLite")
         for e in approved:
             logger.info(
                 "  [DRY] %s %s  %s  conviction=%s  RR=%.1f  risk=%.0f%%",
@@ -548,6 +808,8 @@ def _finalize_pipeline(
                 e.conviction.upper(), e.reward_risk_ratio,
                 e.suggested_risk_pct * 100,
             )
+        for e in session:
+            logger.info("  [DRY] SESSION %s conf=%.2f", e.symbol, e.confidence_score)
         return
 
     # Log to SQLite
@@ -565,15 +827,34 @@ def _finalize_pipeline(
                 entry,
                 langfuse_trace_id=trace_id,
                 asset_class=universe.asset_class_for(entry.symbol),
+                tier="PUBLISHED",
             )
             if signal_id:
                 logger.info("Logged signal %s", signal_id)
                 new_signals.append(entry)
+                notion_page_id = create_signal_entry(
+                    entry,
+                    signal_id=signal_id,
+                    asset_class=universe.asset_class_for(entry.symbol),
+                    macro_regime=macro_regime,
+                )
+                if notion_page_id:
+                    signal_logger.update_signal(signal_id, notion_page_id=notion_page_id)
             else:
                 logger.info(
                     "Signal %s %s already exists — skipping",
                     entry.symbol, entry.report_date,
                 )
+
+        for entry in session:
+            session_id = signal_logger.log(
+                entry,
+                langfuse_trace_id=trace_id,
+                asset_class=universe.asset_class_for(entry.symbol),
+                tier="SESSION",
+            )
+            if session_id:
+                logger.info("Logged session signal %s", session_id)
 
         funnel.published = len(new_signals)
 
@@ -589,20 +870,13 @@ def _finalize_pipeline(
     funnel_header = f"Pipeline Funnel — {today}"
     logger.info("%s\n%s", funnel_header, "\n".join(funnel.summary_lines()))
 
-    # Post to Discord
-    notifier = DiscordNotifier()
     if new_signals:
-        posted = notifier.post(new_signals, open_count=open_count, report_date=today)
-        if posted:
-            logger.info(
-                "Discord embed posted  signals=%d  open=%d",
-                len(new_signals), open_count,
-            )
+        logger.info("Published %d signals  open=%d", len(new_signals), open_count)
+        publish_playbook(
+            new_signals, report_date=today, macro_regime=macro_regime,
+        )
     else:
-        logger.info("No new signals to post")
-
-    # Post funnel summary to Discord
-    notifier.post_funnel(today, funnel)
+        logger.info("No new signals to publish")
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +897,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Run pipeline but skip SQLite logging and Discord posting",
+        help="Run pipeline but skip SQLite logging",
     )
     parser.add_argument(
         "--log-level",
@@ -669,14 +943,8 @@ def main(argv: list[str] | None = None) -> None:
             dry_run=args.dry_run,
             asset_class=args.asset_class,
         )
-    except Exception as exc:
+    except Exception:
         logger.exception("Pipeline crashed")
-        if not args.dry_run:
-            try:
-                notifier = DiscordNotifier()
-                notifier.post_error(exc)
-            except Exception:
-                logger.exception("Failed to post error alert to Discord")
         sys.exit(1)
 
     print(f"\nDone. {len(entries)} approved signals.")

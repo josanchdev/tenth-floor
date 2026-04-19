@@ -89,13 +89,10 @@ def sample_proposal() -> TradeProposal:
         timeframe="1d",
         action=SetupAction.BUY,
         direction=SignalDirection.LONG,
-        entry_zone_low=61800.0,
-        entry_zone_high=62200.0,
+        entry_price=62000.0,
         stop_loss=61000.0,
         take_profit=64000.0,
-        confidence=0.82,
         rationale="Strong uptrend with EMA alignment.",
-        entry_reasoning="Near EMA 20 support.",
         stop_reasoning="Below swing low at 61200.",
         target_reasoning="Resistance at 64000.",
         confluence_factors=["EMA alignment", "Volume support"],
@@ -167,13 +164,9 @@ class TestTradeAnalyst:
             "timeframe": "1d",
             "action": "buy",
             "direction": "long",
-            "entry_zone_low": 61800.0,
-            "entry_zone_high": 62200.0,
             "stop_loss": 61000.0,
             "take_profit": 64000.0,
-            "confidence": 0.78,
             "rationale": "Strong setup.",
-            "entry_reasoning": "Near EMA 20.",
             "stop_reasoning": "Below swing low.",
             "target_reasoning": "Resistance at 64000.",
             "confluence_factors": ["EMA alignment"],
@@ -188,7 +181,6 @@ class TestTradeAnalyst:
         assert isinstance(result, TradeProposal)
         assert result.action == SetupAction.BUY
         assert result.direction == SignalDirection.LONG
-        assert result.confidence == 0.78
 
     def test_short_override_to_skip(
         self, sample_snapshot: PairSnapshot, sample_macro: MacroSignal,
@@ -199,11 +191,8 @@ class TestTradeAnalyst:
             "timeframe": "1d",
             "action": "buy",
             "direction": "short",
-            "entry_zone_low": 62000.0,
-            "entry_zone_high": 62500.0,
             "stop_loss": 61000.0,
             "take_profit": 64000.0,
-            "confidence": 0.70,
             "rationale": "Bearish signal.",
             "confluence_factors": [],
             "risk_factors": [],
@@ -226,11 +215,8 @@ class TestTradeAnalyst:
             "timeframe": "1d",
             "action": "buy",
             "direction": "long",
-            "entry_zone_low": 61800.0,
-            "entry_zone_high": 62200.0,
             "stop_loss": 61000.0,
             "take_profit": 64000.0,
-            "confidence": 0.78,
             "rationale": "Strong setup.",
             "confluence_factors": [],
             "risk_factors": [],
@@ -270,6 +256,7 @@ class TestRiskReviewer:
             "symbol": "BTCUSDT",
             "verdict": "approve",
             "conviction": "high",
+            "confidence": 0.85,
             "reasoning": "Strongest setup today.",
             "risk_notes": "Watch overhead resistance.",
         })
@@ -291,6 +278,7 @@ class TestRiskReviewer:
             "symbol": "BTCUSDT",
             "verdict": "reject",
             "conviction": "standard",
+            "confidence": 0.0,
             "reasoning": "Macro headwind, risk-off regime.",
             "risk_notes": "VIX elevated.",
         })
@@ -354,11 +342,11 @@ class TestRiskReviewer:
         responses = [
             json.dumps({
                 "symbol": "BTCUSDT", "verdict": "approve", "conviction": "high",
-                "reasoning": "Top pick.", "risk_notes": "",
+                "confidence": 0.85, "reasoning": "Top pick.", "risk_notes": "",
             }),
             json.dumps({
                 "symbol": "ETHUSDT", "verdict": "reject", "conviction": "standard",
-                "reasoning": "Already exposed via BTC.", "risk_notes": "",
+                "confidence": 0.0, "reasoning": "Already exposed via BTC.", "risk_notes": "",
             }),
         ]
         mock = MagicMock(side_effect=responses)
@@ -382,7 +370,7 @@ class TestRiskReviewer:
 class TestValidation:
     def test_valid_proposal(self, sample_proposal: TradeProposal) -> None:
         from tenth_floor.validation import validate_proposal
-        result = validate_proposal(sample_proposal)
+        result = validate_proposal(sample_proposal, current_price=62000.0)
         assert result.valid is True
         assert result.reward_risk_ratio >= 1.5
 
@@ -391,11 +379,10 @@ class TestValidation:
         skip = TradeProposal(
             symbol="BTCUSDT", timeframe="1d",
             action=SetupAction.SKIP, direction=SignalDirection.NEUTRAL,
-            entry_zone_low=100.0, entry_zone_high=101.0,
-            stop_loss=95.0, take_profit=110.0,
-            confidence=0.2, rationale="No edge.",
+            entry_price=100.0, stop_loss=95.0, take_profit=110.0,
+            rationale="No edge.",
         )
-        result = validate_proposal(skip)
+        result = validate_proposal(skip, current_price=100.0)
         assert result.valid is True
 
     def test_reject_short(self) -> None:
@@ -403,11 +390,10 @@ class TestValidation:
         short = TradeProposal(
             symbol="BTCUSDT", timeframe="1d",
             action=SetupAction.BUY, direction=SignalDirection.SHORT,
-            entry_zone_low=62000.0, entry_zone_high=62500.0,
-            stop_loss=63000.0, take_profit=60000.0,
-            confidence=0.7, rationale="Bearish.",
+            entry_price=62000.0, stop_loss=63000.0, take_profit=60000.0,
+            rationale="Bearish.",
         )
-        result = validate_proposal(short)
+        result = validate_proposal(short, current_price=62000.0)
         assert result.valid is False
         assert "SHORT" in result.reason
 
@@ -416,11 +402,10 @@ class TestValidation:
         bad = TradeProposal(
             symbol="BTCUSDT", timeframe="1d",
             action=SetupAction.BUY, direction=SignalDirection.LONG,
-            entry_zone_low=62000.0, entry_zone_high=62500.0,
-            stop_loss=63000.0, take_profit=66000.0,
-            confidence=0.7, rationale="Bad SL.",
+            entry_price=62000.0, stop_loss=63000.0, take_profit=66000.0,
+            rationale="Bad SL.",
         )
-        result = validate_proposal(bad)
+        result = validate_proposal(bad, current_price=62000.0)
         assert result.valid is False
         assert "SL" in result.reason
 
@@ -429,55 +414,37 @@ class TestValidation:
         bad = TradeProposal(
             symbol="BTCUSDT", timeframe="1d",
             action=SetupAction.BUY, direction=SignalDirection.LONG,
-            entry_zone_low=62000.0, entry_zone_high=62500.0,
-            stop_loss=61000.0, take_profit=62000.0,
-            confidence=0.7, rationale="Bad TP.",
+            entry_price=62000.0, stop_loss=61000.0, take_profit=62000.0,
+            rationale="Bad TP.",
         )
-        result = validate_proposal(bad)
+        result = validate_proposal(bad, current_price=62000.0)
         assert result.valid is False
         assert "TP" in result.reason
 
     def test_reject_low_rr(self) -> None:
         from tenth_floor.validation import validate_proposal
-        # R:R = (63000 - 62250) / (62250 - 62000) = 750/250 = 3.0 — wait, need low R:R
-        # entry_mid = 62250, risk = 62250-62100 = 150, reward = 62400-62250 = 150 → R:R = 1.0
+        # entry=62250, risk=150, reward=150 → R:R = 1.0
         low_rr = TradeProposal(
             symbol="BTCUSDT", timeframe="1d",
             action=SetupAction.BUY, direction=SignalDirection.LONG,
-            entry_zone_low=62000.0, entry_zone_high=62500.0,
-            stop_loss=62000.0 - 1.0, take_profit=62500.0 + 1.0,
-            confidence=0.7, rationale="Low R:R.",
+            entry_price=62250.0, stop_loss=62100.0, take_profit=62400.0,
+            rationale="Low R:R.",
         )
-        result = validate_proposal(low_rr)
+        result = validate_proposal(low_rr, current_price=62250.0)
         assert result.valid is False
         assert "R:R" in result.reason
 
     def test_reject_sl_too_far(self) -> None:
         from tenth_floor.validation import validate_proposal
-        # entry_mid = 62250, SL at 50000 → 19.7% below → exceeds 15%
         far_sl = TradeProposal(
             symbol="BTCUSDT", timeframe="1d",
             action=SetupAction.BUY, direction=SignalDirection.LONG,
-            entry_zone_low=62000.0, entry_zone_high=62500.0,
-            stop_loss=50000.0, take_profit=90000.0,
-            confidence=0.7, rationale="SL too far.",
+            entry_price=62250.0, stop_loss=50000.0, take_profit=90000.0,
+            rationale="SL too far.",
         )
-        result = validate_proposal(far_sl)
+        result = validate_proposal(far_sl, current_price=62250.0)
         assert result.valid is False
         assert "15%" in result.reason
-
-    def test_reject_entry_zone_inverted(self) -> None:
-        from tenth_floor.validation import validate_proposal
-        inverted = TradeProposal(
-            symbol="BTCUSDT", timeframe="1d",
-            action=SetupAction.BUY, direction=SignalDirection.LONG,
-            entry_zone_low=62500.0, entry_zone_high=62000.0,
-            stop_loss=61000.0, take_profit=65000.0,
-            confidence=0.7, rationale="Inverted zone.",
-        )
-        result = validate_proposal(inverted)
-        assert result.valid is False
-        assert "entry_zone_low" in result.reason
 
 
 # ---------------------------------------------------------------------------

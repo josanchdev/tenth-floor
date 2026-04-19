@@ -2,37 +2,40 @@
 -- Runtime location: data/playbook_history.db
 -- This file is version-controlled; the .db file is git-ignored.
 --
--- Status lifecycle: PENDING → OPEN → HIT_TP | HIT_SL | EXPIRED
---   PENDING: Signal published, price has not entered entry zone yet.
---   OPEN:    Price entered entry zone — signal is active.
+-- Status lifecycle: OPEN → HIT_TP | HIT_SL | EXPIRED
+--   OPEN:    Signal published — fills immediately at the snapshot price.
 --   HIT_TP:  Candle high reached take-profit.
 --   HIT_SL:  Candle low reached stop-loss (assumed first on same-candle ambiguity).
 --   EXPIRED: 14 calendar days with no TP or SL hit.
+--
+-- There is no PENDING tier and no entry zone. The pipeline runs once a day
+-- and the operator acts on the price they see — a "wait for the zone" model
+-- adds nothing for a daily cadence.
 
 CREATE TABLE IF NOT EXISTS signals (
     signal_id                TEXT PRIMARY KEY,
     created_at               TEXT NOT NULL,
-    entered_at               TEXT,              -- when PENDING → OPEN (candle entered entry zone)
     report_date              TEXT NOT NULL,
     pair                     TEXT NOT NULL,
     timeframe                TEXT NOT NULL,
     direction                TEXT NOT NULL,
     conviction               TEXT NOT NULL,
     confidence_score         REAL NOT NULL,
-    entry_low                REAL NOT NULL,
-    entry_high               REAL NOT NULL,
+    entry_price              REAL NOT NULL,
     stop_loss                REAL NOT NULL,
     take_profit              REAL NOT NULL,
     reward_risk              REAL NOT NULL,
     suggested_risk_pct       REAL NOT NULL,
     strategy_rationale       TEXT,
-    status                   TEXT NOT NULL DEFAULT 'PENDING',
+    status                   TEXT NOT NULL DEFAULT 'OPEN',
     outcome_price            REAL,
     outcome_date             TEXT,
     max_adverse_excursion    REAL,
     max_favorable_excursion  REAL,
     asset_class              TEXT NOT NULL DEFAULT 'crypto',
     langfuse_trace_id        TEXT,
+    tier                     TEXT NOT NULL DEFAULT 'PUBLISHED',  -- PUBLISHED | SESSION
+    notion_page_id           TEXT,                               -- Notion Signal Journal page ID
 
     -- Prevent duplicate signals for the same pair/timeframe on the same day.
     -- Re-running the pipeline is safe: the second insert is silently skipped.

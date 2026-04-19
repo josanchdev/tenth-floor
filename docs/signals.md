@@ -78,29 +78,6 @@ The LLM is the trader. Python is the risk manager.
 
 ---
 
-## Discord Embed Format
-
-One consolidated embed per daily run. Never one embed per signal.
-
-```
-Title:   THE TENTH FLOOR — {YYYY-MM-DD}
-Color:   0x00ff88  (green)  if any approved signals
-         0x888888  (grey)   if no approved signals
-
-Per approved signal (one per pair — deduped):
-  Field: "{pair} {TF} · LONG · {CONVICTION TIER}"
-  Value: "Entry: {entry_low} – {entry_high}"
-         "Stop: {stop_loss}  |  Target: {take_profit}"
-         "R:R: {reward_risk}  ·  Risk: {suggested_risk_pct x 100}%"
-         "{rationale}"
-
-Footer: "Open signals in DB: {n}  |  Powered by The Tenth Floor AI"
-```
-
-Implemented in `notifications/discord_notifier.py`.
-
----
-
 ## SQLite Schema
 
 Approved signals are persisted to `data/playbook_history.db` (git-ignored). The DDL lives in `db/schema.sql`.

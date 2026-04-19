@@ -1,88 +1,42 @@
-# The Tenth Floor AI
+# The Tenth Floor
 
-> Multi-asset AI swing-trade analysis — institutional-grade signals
-> across crypto, US equities, ETFs, and commodities for a paid Discord
-> community.
+> Personal multi-asset swing-trade research system. Not a product, not a
+> service — a 12-month forward-testing experiment to see whether an LLM
+> pipeline has actual edge.
 
-Subscribers receive daily signal embeds with full reasoning from an
-AI-first pipeline. They execute trades manually on their own accounts.
-The system never touches money, never places orders, never manages a
-budget.
+Three specialist LLM agents (MacroAnalyst, TradeAnalyst, RiskReviewer)
+analyse ~36 assets daily across crypto, US equities, ETFs, and
+commodities. Python computes indicators and validates the LLM's chosen
+entry/stop/target for sanity. Runs are triggered manually from a React
+dashboard — no cron, no scheduler, no automated publishing. Every
+approved signal is tracked to resolution so expectancy in R units is
+measurable from real outcomes.
+
+See [plan.md](plan.md) for the full experiment plan and decision gates.
 
 ---
 
-## How It Works
-
-The pipeline fetches daily OHLCV data and computes technical indicators
-in Python as context for LLM reasoning. Three specialised AI agents —
-MacroAnalyst, TradeAnalyst, and RiskReviewer — make all trading
-decisions: macro regime assessment, individual trade analysis with
-entry/SL/TP, and portfolio-level risk review. Python validates the
-output for sanity. Approved signals (max 3/day) are published to
-Discord and logged to SQLite. Signal resolutions (TP hit, SL hit,
-expired) are also posted for full transparency.
-
-### Pipeline Flow (Phase 1.5: AI-First)
+## Pipeline
 
 ```
-Data (ccxt/yfinance) ──→ TACalculator ──→ Indicators + Structural Levels
-                                                   ↓
+Data (ccxt / yfinance) ──→ TACalculator ──→ Indicators + Structural Levels
+                                                    ↓
 MacroAnalyst (1 LLM call) ──→ macro frame (regime, per-class impact)
-                                                   ↓
-Pre-screen (data-quality only, very permissive) ──→ ~30-36 candidates
-                                                   ↓
-TradeAnalyst (1 LLM call per candidate) ──→ BUY proposals with entry/SL/TP/reasoning
-                                                   ↓
+                                                    ↓
+Pre-screen (data quality only) ──→ ~30–36 candidates
+                                                    ↓
+TradeAnalyst (1 LLM call per candidate) ──→ BUY proposals with entry/SL/TP
+                                                    ↓
 Python validation (sanity checks) ──→ valid proposals
-                                                   ↓
-RiskReviewer (1 LLM call, ALL proposals) ──→ approved signals with conviction
-                                                   ↓
-Signal cap (business rule) ──→ featured signals ──→ SignalLogger + Discord
+                                                    ↓
+RiskReviewer (1 LLM call per proposal) ──→ approved signals + conviction
+                                                    ↓
+Signal cap (max 5 / run) ──→ SignalLogger + dashboard
 ```
 
-**Hard constraints:** spot only · no leverage · no futures · no
-auto-execution · LONG setups only · R:R >= 1.5
-
-See [docs/architecture.md](docs/architecture.md) for the full system
-diagram.
-
----
-
-## Project Status
-
-### V4 (active — approved 2026-03-30)
-
-Multi-asset universe + AI-first signal generation. The core problem:
-26 crypto pairs are one correlated market — when BTC enters a downtrend,
-all pairs fail simultaneously. V4 expands to ~36 structurally
-uncorrelated assets and shifts decision-making to the LLM so the
-pipeline produces signals in any market regime.
-
-See [ROADMAP.md](ROADMAP.md) for the full V4 plan.
-
-| Phase | Scope | Status |
-|-------|-------|--------|
-| Phase 1 — Foundation | Universe restructure, YFinanceDataFetcher, class-leader gates | Complete |
-| Phase 1.5 — AI-First | MacroAnalyst, TradeAnalyst, RiskReviewer, delete mechanical gates | Complete |
-| Phase 2 — Signal Quality | Docker (5090), per-proposal RiskReviewer, RSS feeds, earnings calendar | Next |
-| Phase 3 — Validation | 90-day backtest, equity validation mode, signal quality metrics | Planned |
-| Phase 4 — Launch | Multi-asset Discord channels, tweet drafter, dashboard updates | Planned |
-
-### V3 (complete — 2026-03-27)
-
-Pipeline diagnostics, backtester, LLM retry, config profiles, failure
-alerting, LLM short-circuit, 26-pair universe, sector diversity cap,
-DB migrations, CI, dynamic price precision, duplicate-safe Discord,
-market-price entries.
-
-### V2 (complete)
-
-Full pipeline: data layer, feature engine, 4-agent LLM pipeline, SQLite
-logging, outcome checker, Discord notifier, admin dashboard, deterministic
-trend scoring, BTC relative strength filter.
-
-**176 tests** across 11 files. All mocked — no network calls, no LLM
-server required.
+**Hard constraints:** spot only · LONG only · no leverage · no futures ·
+R:R ≥ 1.5 (business integrity floor) · 1d timeframe across all asset
+classes.
 
 ---
 
@@ -90,168 +44,115 @@ server required.
 
 ### Requirements
 
-- Python 3.12+ (3.13 supported)
-- Local LLM inference server ([vLLM](https://docs.vllm.ai/)
-  recommended) serving Qwen3 32B AWQ or any OpenAI-compatible model
-- GPU with >= 24 GB VRAM (RTX 3090 with AWQ quantisation, or
-  >= 32 GB for full-precision)
-- A [Langfuse](https://langfuse.com) account (free tier works)
-- A Discord webhook URL (for output — not required for local
-  development)
+- Python 3.12+
+- GPU with ≥ 24 GB VRAM (RTX 3090 with AWQ) or ≥ 32 GB (RTX 5090)
+- [vLLM](https://docs.vllm.ai/) serving Qwen3-32B-AWQ or any
+  OpenAI-compatible model
+- Node 20+ (for the dashboard)
+- A [Langfuse](https://langfuse.com) account for LLM tracing (free tier)
 
 ### Install
 
 ```bash
 git clone <repo>
-cd the-tenth-floor
+cd tenth-floor
 pip install -e ".[dev]"
+cd dashboard && npm install && cd ..
+cp .env.example .env        # fill in LANGFUSE_* keys
 ```
 
-### Start the inference server
+### Run the dashboard
 
 ```bash
-vllm serve Qwen/Qwen3-32B-AWQ \
-  --port 8000 \
-  --max-model-len 4096 \
-  --gpu-memory-utilization 0.90
+./dashboard.sh              # starts FastAPI (8765) + Vite (5173)
 ```
 
-### Configure environment
+Open <http://localhost:5173>, start vLLM from the LLM status pill, then
+click **Run pipeline**. Events stream live; approved signals land in
+[data/playbook_history.db](data/playbook_history.db) and surface in the
+Track Record view.
+
+### CLI alternatives
 
 ```bash
-cp .env.example .env
-# Edit .env — fill in Langfuse keys and Discord webhook URL
+./run.sh --local              # headless local pipeline (vLLM must already be running)
+./run.sh --outcomes-only      # resolve PENDING/OPEN signals only
+./run.sh --reset-db           # wipe + recreate the signal DB from schema.sql
+pytest                        # all tests (mocked, no network)
 ```
+
+### Environment
 
 | Variable | Required | Description |
 |---|---|---|
-| `LANGFUSE_PUBLIC_KEY` | Yes | Langfuse project public key |
-| `LANGFUSE_SECRET_KEY` | Yes | Langfuse project secret key |
-| `LANGFUSE_HOST` | No | Self-hosted Langfuse URL (default: cloud) |
-| `LLM_BASE_URL` | No | Override inference server URL (default: `http://localhost:8000/v1`) |
-| `OPENAI_API_KEY` | No | Only if your inference server requires auth |
-| `DISCORD_WEBHOOK_URL` | No | Discord webhook for signal publishing |
+| `LANGFUSE_PUBLIC_KEY`  | yes | Langfuse project key |
+| `LANGFUSE_SECRET_KEY`  | yes | Langfuse project secret |
+| `LANGFUSE_HOST`        | no  | Self-hosted Langfuse URL (default: cloud) |
+| `LLM_BASE_URL`         | no  | Override inference server URL (default: `http://localhost:8000/v1`) |
+| `VLLM_MODEL`           | no  | Model id for the dashboard LLM launcher |
+| `VLLM_PORT`            | no  | vLLM port (default 8000) |
 
-### Run the pipeline
-
-```bash
-# Full universe
-python -m tenth_floor.main
-
-# Specific symbols
-python -m tenth_floor.main BTCUSDT AAPL SPY
-
-# Dry run (no DB writes, no Discord posts)
-python -m tenth_floor.main --dry-run
-```
-
-### Run tests
-
-```bash
-pytest          # all 176 tests
-pytest -v       # verbose output
-pytest --cov    # with coverage report
-```
-
-See [docs/deployment.md](docs/deployment.md) for production setup with
-cron, outcome checking, and monitoring.
-
----
-
-## Signal Output
-
-Each approved signal carries:
-
-- **Symbol** and timeframe (1d)
-- **Entry zone** — LLM-selected based on structural analysis
-- **Stop-loss** — LLM-selected, validated by Python (sanity bounds)
-- **Take-profit** — LLM-selected, validated by Python (R:R >= 1.5)
-- **Reward:Risk ratio** (minimum 1.5 — business integrity floor)
-- **Conviction tier** (`high` = 2% suggested risk, `standard` = 1%)
-- **Trade rationale** (LLM-generated, full reasoning including macro context)
-- **Outcome notifications** — TP hit, SL hit, and expiry updates posted to Discord
-
-Max 3 signals per day (production). Silence is the default — only the
-strongest setups are published. See [docs/signals.md](docs/signals.md)
-for the full specification.
-
----
-
-## Design Principles
-
-1. **AI-first, Python validates.** LLM agents make all trading
-   decisions — BUY/SKIP, entry, SL, TP. Python computes indicators as
-   context, validates LLM output for sanity, and enforces business rules.
-2. **Python owns the data.** `pandas-ta` computes every indicator.
-   Structural levels, ATR, and volume metrics are pre-computed so the
-   LLM can reason with them instead of doing arithmetic.
-3. **Spot only, LONG only.** No leverage, no futures, no short
-   proposals. Enforced by Python validation after LLM output.
-4. **Glass box.** Every signal includes full reasoning. Every LLM call
-   is traced in Langfuse.
-5. **Graceful degradation.** Sentiment sources failing never crashes
-   the pipeline.
-6. **No secrets in config.** All keys are environment variables; config
-   files are safe to commit.
-7. **Local-first inference.** No cloud API dependency. Model switching
-   is a config change.
+See [.env.example](.env.example) for the full list and hardware profile
+variants in [.env.3090](.env.3090) / [.env.5090](.env.5090).
 
 ---
 
 ## Repository Layout
 
 ```
-the-tenth-floor/
+tenth-floor/
 ├── config/
-│   ├── universe.json          # 36-asset universe + sector mapping
-│   ├── risk_profile.json      # Conviction tiers, R:R floor, max signals
-│   ├── models.yaml            # LLM provider + per-agent config
-│   ├── services.yaml          # External service configuration
-│   └── profiles/              # validation.json / production.json overlays
+│   ├── universe.json           # 36-asset universe + sector mapping
+│   ├── risk_profile.json       # Conviction tiers, R:R floor, max signals
+│   ├── models.yaml             # LLM provider + per-agent config
+│   ├── services.yaml           # External service configuration
+│   └── profiles/               # validation / production overlays
 ├── db/
-│   └── schema.sql             # SQLite DDL (version-controlled)
+│   ├── schema.sql              # SQLite DDL (version-controlled)
+│   └── migrations/             # Forward-only schema migrations
 ├── docs/
-│   ├── architecture.md        # System design + Mermaid diagram
-│   ├── signals.md             # Signal output specification
-│   └── deployment.md          # Production deployment guide
+│   ├── architecture.md         # System design
+│   └── signals.md              # Signal output specification
 ├── src/tenth_floor/
-│   ├── main.py                # Daily pipeline orchestrator
-│   ├── config.py              # Central path resolver
-│   ├── universe.py            # Universe loader + asset queries
-│   ├── backtest.py            # Historical replay / backtester
-│   ├── check_outcomes.py      # Standalone TP/SL resolution
-│   ├── post_tweet.py          # X/Twitter auto-poster
-│   ├── data/
-│   │   ├── market_data.py     # Crypto OHLCV via ccxt + Parquet cache
-│   │   ├── yfinance_data.py   # Equity/ETF OHLCV via yfinance + Parquet cache
-│   │   ├── sentiment.py       # Fear & Greed Index + RSS headlines
-│   │   └── models.py          # Pydantic v2 contracts for every layer
-│   ├── features/
-│   │   ├── ta_calculator.py   # pandas-ta indicator computation
-│   │   └── pair_snapshot.py   # PairSnapshot assembly
-│   ├── agents/
-│   │   ├── base.py            # Provider-agnostic LLM call + config
-│   │   ├── macro_analyst.py   # Macro regime + per-class outlook
-│   │   ├── trade_analyst.py   # Per-asset BUY/SKIP with LLM-chosen entry/SL/TP
-│   │   └── risk_reviewer.py   # Portfolio-level approval + conviction tiering
-│   ├── db/
-│   │   └── signal_logger.py   # SQLite signal persistence
-│   ├── notifications/
-│   │   └── discord_notifier.py # Discord webhook poster
-│   ├── social/
-│   │   ├── tweet_drafter.py   # LLM-powered tweet drafting
-│   │   ├── tweet_poster.py    # X/Twitter API posting
-│   │   └── discord_draft.py   # Tweet drafts to Discord
-│   └── dashboard/
-│       ├── app.py             # Streamlit admin dashboard
-│       └── queries.py         # SQL + pandas queries for dashboard
-├── tests/                     # 176 unit tests, all mocked
-├── ROADMAP.md                 # V4 implementation plan
-└── GTM.md                     # Go-to-market plan
+│   ├── main.py                 # Pipeline orchestrator
+│   ├── check_outcomes.py       # TP/SL resolution against real candles
+│   ├── events.py               # In-process event bus (feeds the dashboard WS)
+│   ├── config.py               # Central path resolver
+│   ├── universe.py             # Universe loader + asset queries
+│   ├── validation.py           # Python sanity checks on LLM output
+│   ├── data/                   # ccxt / yfinance / sentiment / typed models
+│   ├── features/               # TA indicators + PairSnapshot assembly
+│   ├── agents/                 # MacroAnalyst, TradeAnalyst, RiskReviewer
+│   ├── db/signal_logger.py     # SQLite signal persistence
+│   └── api/                    # FastAPI backend (signals, runs, llm, ws)
+├── dashboard/                  # Vite + React 19 + Tailwind v4 frontend
+├── tests/                      # Unit + integration tests (all mocked)
+├── plan.md                     # 365-day experiment plan — source of truth
+├── ROADMAP.md                  # V4 architecture history
+├── run.sh                      # CLI helper (local / outcomes / reset-db)
+├── dashboard.sh                # Dev launcher: uvicorn + Vite
+└── docker-compose.yml          # vllm + api + dashboard stack
 ```
+
+---
+
+## Design Principles
+
+1. **AI-first, Python validates.** The LLM decides BUY/SKIP and picks
+   entry/SL/TP. Python computes indicators as context and validates the
+   output for sanity — never overrides LLM judgement with mechanical
+   rules.
+2. **Minimal prompts.** Role + output format only. No prescriptive
+   trading checklists, no fixed confluence lists. The LLM reasons freely.
+3. **Dashboard-only trigger.** Runs happen when Jorge clicks a button.
+   No cron, no scheduler.
+4. **Glass box.** Every signal carries full LLM reasoning; every call
+   is traced in Langfuse.
+5. **Forward testing, not backtesting.** Cleaner data, no overfitting.
+   The metric that matters is expectancy in R over the 12-month window.
 
 ---
 
 ## License
 
-MIT — for research and signal-provider use. Not financial advice.
+MIT — for personal research. Not financial advice.

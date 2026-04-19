@@ -1,12 +1,15 @@
 """
-TradeAnalyst — AI-first trade analysis with LLM-chosen price levels.
+TradeAnalyst — AI-first trade analysis with LLM-chosen SL/TP.
 
 One coherent analysis per asset with full context: macro frame, TA
 indicators, structural levels, volume.
 
-The LLM decides BUY or SKIP. If BUY, it picks entry zone, SL, TP with
-structural reasoning. Python validates the output for sanity but does not
-override the LLM's judgment.
+The LLM decides BUY or SKIP. If BUY, it picks SL and TP with structural
+reasoning, knowing the trade fills at the snapshot's current price.
+There is no entry zone — the operator runs the pipeline once a day and
+acts immediately, so a "wait until price comes back to the zone" model
+adds nothing. Python validates SL/TP and R:R against the live price and
+attaches ``entry_price`` to the proposal post-parse.
 
 Usage::
 
@@ -58,16 +61,17 @@ often the correct — answer. Only propose a BUY when you would personally \
 take the trade with your own money.
 
 YOU OWN THE MATH:
-You must pick entry, stop, and target levels that produce a reward-to-risk \
-ratio of at least 1.5. This is your responsibility, not someone else's. If \
-the structural levels don't support R:R >= 1.5, the setup isn't worth taking \
-— SKIP it. Do not stretch targets or tighten stops to force the math; pick \
-honest levels and let the trade be what it is.
+The trade fills at the current price shown in the context — that's your \
+entry. You pick the stop and the target. They must produce a reward-to-risk \
+ratio of at least 1.5 against the current price. If the structural levels \
+don't support R:R >= 1.5 from here, the setup isn't worth taking — SKIP it. \
+Do not stretch targets or tighten stops to force the math; pick honest \
+levels and let the trade be what it is.
 
 CONSTRAINTS:
 - Spot longs only. action="buy" + direction="long", or action="skip" + direction="neutral".
-- Entry zone should be near current price (subscribers act immediately).
-- Reward-to-risk ratio must be >= 1.5 on honest structural levels.
+- Entry is the current price — do not propose limit orders or wait-for-pullback setups.
+- Reward-to-risk ratio must be >= 1.5 measured from the current price.
 
 OUTPUT FORMAT (strict JSON):
 {
@@ -75,13 +79,9 @@ OUTPUT FORMAT (strict JSON):
   "timeframe": "1d",
   "action": "buy|skip",
   "direction": "long|neutral",
-  "entry_zone_low": <float>,
-  "entry_zone_high": <float>,
   "stop_loss": <float>,
   "take_profit": <float>,
-  "confidence": <float 0.0-1.0>,
   "rationale": "<your full trade thesis or reason for skipping>",
-  "entry_reasoning": "<why this entry zone>",
   "stop_reasoning": "<why this SL level>",
   "target_reasoning": "<why this TP level>",
   "confluence_factors": ["<what supports this trade>"],
@@ -139,9 +139,11 @@ class TradeAnalyst:
         except json.JSONDecodeError as exc:
             raise ValueError(f"Invalid JSON from TradeAnalyst: {exc}") from exc
 
+        # Entry is the snapshot price — attached here, not chosen by the LLM.
+        data["entry_price"] = snapshot.current_price
+
         if str(data.get("action", "")).lower() == "skip":
-            price_fields = ("entry_zone_low", "entry_zone_high", "stop_loss", "take_profit")
-            for field in price_fields:
+            for field in ("stop_loss", "take_profit"):
                 if not data.get(field):  # catches None, 0, missing
                     data[field] = 1.0
 
@@ -168,11 +170,10 @@ class TradeAnalyst:
             })
 
         logger.info(
-            "TradeProposal  %s %s  action=%s  conf=%.2f  entry=%.4f–%.4f  "
-            "SL=%.4f  TP=%.4f",
+            "TradeProposal  %s %s  action=%s  entry=%.4f  SL=%.4f  TP=%.4f",
             proposal.symbol, proposal.timeframe,
-            proposal.action.value, proposal.confidence,
-            proposal.entry_zone_low, proposal.entry_zone_high,
+            proposal.action.value,
+            proposal.entry_price,
             proposal.stop_loss, proposal.take_profit,
         )
         return proposal

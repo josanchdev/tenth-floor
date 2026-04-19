@@ -1,27 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# The Tenth Floor AI — Run Script
+# The Tenth Floor — CLI helper (dev / ops only)
 #
-# Default mode (gaming PC / 5090): Docker — starts vLLM + pipeline, tears
-# down when pipeline exits. GPU idles between runs.
+# The operational path is the dashboard Run button (see ./dashboard.sh).
+# This script covers the three things that still need a shell entry point:
 #
-# Local mode (dev machine — no Docker): pass --local to use .vllmenv + .venv
-# directly. Same pipeline, no containers.
+#   ./run.sh --local                 # headless local pipeline run (no Docker)
+#   ./run.sh --outcomes-only         # resolve PENDING/OPEN signals
+#   ./run.sh --reset-db              # wipe + recreate the signal DB from schema.sql
 #
-# Usage:
-#   ./run.sh                           # full universe (Docker)
-#   ./run.sh --local                   # full universe (local venvs, no Docker)
-#   ./run.sh --dry-run                 # no DB writes, no Discord posts
-#   ./run.sh --profile validation      # use validation risk thresholds
-#   ./run.sh --asset-class crypto      # crypto only
-#   ./run.sh BTCUSDT AAPL SPY          # specific symbols
-#   ./run.sh --outcomes-only           # resolve PENDING signals (no vLLM)
-#   ./run.sh --reset-db                # wipe and recreate DB from schema.sql
-#   ./run.sh --dashboard               # Streamlit dashboard (local Python)
-#
-# Hardware profiles (Docker):
-#   cp .env.3090 .env   # RTX 3090: AWQ, 10K context
-#   cp .env.5090 .env   # RTX 5090: full context, higher throughput
+# Pipeline args (pairs, --dry-run, --profile, --asset-class) are forwarded
+# verbatim to `python -m tenth_floor.main`.
 # =============================================================================
 
 set -euo pipefail
@@ -29,10 +18,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-log()  { echo "[$(date -u +%H:%M:%S)] $*"; }
-die()  { log "ERROR: $*" >&2; exit 1; }
+log() { echo "[$(date -u +%H:%M:%S)] $*"; }
+die() { log "ERROR: $*" >&2; exit 1; }
 
-# ─── Load .env ───────────────────────────────────────────────────────────────
+# Load .env so VLLM_* and LANGFUSE_* reach the child processes.
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
     set -a
     # shellcheck source=/dev/null
@@ -40,9 +29,7 @@ if [[ -f "${SCRIPT_DIR}/.env" ]]; then
     set +a
 fi
 
-# ─── Parse args ──────────────────────────────────────────────────────────────
 OUTCOMES_ONLY=false
-DASHBOARD=false
 RESET_DB=false
 LOCAL_MODE=false
 PIPELINE_ARGS=""
@@ -50,47 +37,19 @@ PIPELINE_ARGS=""
 for arg in "$@"; do
     case "$arg" in
         --help|-h)
-            cat <<EOF
-Usage: ./run.sh [OPTIONS] [SYMBOLS...]
-
-Options:
-  --local                  Use local venvs instead of Docker (dev machine)
-  --dry-run                Skip DB writes and Discord posts
-  --profile validation     Use validation risk thresholds
-  --profile production     Use production risk thresholds
-  --asset-class CLASS      Run for one asset class (crypto|equity|etf|commodity)
-  --outcomes-only          Resolve pending signals only (no vLLM, no pipeline)
-  --reset-db               Wipe and recreate signal DB from schema.sql
-  --dashboard              Launch Streamlit dashboard (local Python)
-  -h, --help               Show this help
-
-Examples:
-  ./run.sh                           # full daily run (Docker)
-  ./run.sh --local                   # full daily run (local venvs)
-  ./run.sh --local --dry-run         # test on dev machine
-  ./run.sh --outcomes-only           # resolve pending signals
-EOF
+            sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         --outcomes-only) OUTCOMES_ONLY=true ;;
-        --dashboard)     DASHBOARD=true ;;
         --reset-db)      RESET_DB=true ;;
         --local)         LOCAL_MODE=true ;;
-        *) PIPELINE_ARGS="${PIPELINE_ARGS} ${arg}" ;;
+        *)               PIPELINE_ARGS="${PIPELINE_ARGS} ${arg}" ;;
     esac
 done
 
-PIPELINE_ARGS="${PIPELINE_ARGS# }"  # strip leading space
+PIPELINE_ARGS="${PIPELINE_ARGS# }"
 
-# ─── Dashboard mode (local Python, no Docker) ────────────────────────────────
-if [[ "$DASHBOARD" == true ]]; then
-    PYTHON_BIN="${SCRIPT_DIR}/.venv/bin/python"
-    [[ -x "$PYTHON_BIN" ]] || die "Local .venv not found — dashboard requires local install"
-    log "Starting Streamlit dashboard..."
-    exec "$PYTHON_BIN" -m streamlit run "${SCRIPT_DIR}/src/tenth_floor/dashboard/app.py"
-fi
-
-# ─── Reset DB (no Docker needed — data/ is a bind mount) ─────────────────────
+# ─── Reset DB ───────────────────────────────────────────────────────────────
 if [[ "$RESET_DB" == true ]]; then
     DB_PATH="${SCRIPT_DIR}/data/playbook_history.db"
     TODAY="$(date -u +%Y-%m-%d)"
@@ -100,120 +59,50 @@ if [[ "$RESET_DB" == true ]]; then
         log "Backed up DB to ${BACKUP_PATH}"
         rm "$DB_PATH"
     fi
+    mkdir -p "$(dirname "$DB_PATH")"
     sqlite3 "$DB_PATH" < "${SCRIPT_DIR}/db/schema.sql"
     log "DB reset — fresh schema applied"
     exit 0
 fi
 
-# ─── Local mode (dev machine — no Docker) ────────────────────────────────────
-if [[ "$LOCAL_MODE" == true ]]; then
-    VLLM_VENV="${SCRIPT_DIR}/.vllmenv"
-    APP_VENV="${SCRIPT_DIR}/.venv"
-    VLLM_BIN="${VLLM_VENV}/bin/vllm"
-    PYTHON_BIN="${APP_VENV}/bin/python"
-    [[ -x "$VLLM_BIN" ]]  || die "vLLM venv not found at ${VLLM_VENV}"
-    [[ -x "$PYTHON_BIN" ]] || die "App venv not found at ${APP_VENV}"
+# Everything below needs --local.
+[[ "$LOCAL_MODE" == true ]] || die "pass --local (Docker pipeline runs via the dashboard Run button)"
 
-    VLLM_PORT="${VLLM_PORT:-8000}"
-    VLLM_HOST="${VLLM_HOST:-localhost}"
-    VLLM_MODEL="${VLLM_MODEL:-Qwen/Qwen3-32B-AWQ}"
-    VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-10240}"
-    VLLM_GPU_UTIL="${VLLM_GPU_UTIL:-0.90}"
-    VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-32}"
-    HEALTH_URL="http://${VLLM_HOST}:${VLLM_PORT}/v1/models"
-    MAX_WAIT="${MAX_WAIT:-300}"
-    TODAY="$(date -u +%Y-%m-%d)"
-    LOG_DIR="${SCRIPT_DIR}/logs"
-    mkdir -p "$LOG_DIR"
+APP_VENV="${SCRIPT_DIR}/.venv"
+PYTHON_BIN="${APP_VENV}/bin/python"
+[[ -x "$PYTHON_BIN" ]] || die "App venv not found at ${APP_VENV}"
 
-    vllm_running() { curl -sf "${HEALTH_URL}" >/dev/null 2>&1; }
-
-    if [[ "$OUTCOMES_ONLY" == true ]]; then
-        log "═══ THE TENTH FLOOR AI — outcomes check (local) ═══"
-        "$PYTHON_BIN" -m tenth_floor.check_outcomes
-        log "═══ Done ═══"
-        exit 0
-    fi
-
-    log "═══ THE TENTH FLOOR AI — ${TODAY} (local) ═══"
-
-    if vllm_running; then
-        log "vLLM already running"
-    else
-        log "Starting vLLM (model: ${VLLM_MODEL})..."
-        [[ -f "${LOG_DIR}/vllm.log" ]] && mv "${LOG_DIR}/vllm.log" "${LOG_DIR}/vllm_${TODAY}.log"
-        nohup "$VLLM_BIN" serve "${VLLM_MODEL}" \
-            --port "${VLLM_PORT}" \
-            --max-model-len "${VLLM_MAX_MODEL_LEN}" \
-            --gpu-memory-utilization "${VLLM_GPU_UTIL}" \
-            --max-num-seqs "${VLLM_MAX_NUM_SEQS}" \
-            >> "${LOG_DIR}/vllm.log" 2>&1 &
-        VLLM_PID=$!
-        log "vLLM started (PID ${VLLM_PID})"
-
-        log "Waiting for vLLM to be ready..."
-        elapsed=0
-        while ! vllm_running; do
-            (( elapsed >= MAX_WAIT )) && die "vLLM did not become ready within ${MAX_WAIT}s"
-            sleep 5; elapsed=$((elapsed + 5))
-            (( elapsed % 30 == 0 )) && log "  ...waiting (${elapsed}s/${MAX_WAIT}s)"
-        done
-        log "vLLM ready (~${elapsed}s)"
-    fi
-
-    DRY_RUN=false
-    for a in $PIPELINE_ARGS; do [[ "$a" == "--dry-run" ]] && DRY_RUN=true; done
-
-    log "Running pipeline..."
-    # shellcheck disable=SC2086
-    "$PYTHON_BIN" -m tenth_floor.main $PIPELINE_ARGS 2>&1 | tee -a "${LOG_DIR}/pipeline_${TODAY}.log"
-
-    if [[ "$DRY_RUN" == false ]]; then
-        log "Generating tweet draft..."
-        "$PYTHON_BIN" -m tenth_floor.post_tweet --draft-only 2>&1 | tee -a "${LOG_DIR}/pipeline_${TODAY}.log" || true
-
-        log "Running outcome checker..."
-        "$PYTHON_BIN" -m tenth_floor.check_outcomes 2>&1 | tee -a "${LOG_DIR}/outcomes_${TODAY}.log" || true
-
-        DB_PATH="${SCRIPT_DIR}/data/playbook_history.db"
-        [[ -f "$DB_PATH" ]] && sqlite3 "$DB_PATH" ".backup ${DB_PATH}.bak" && log "DB backed up"
-    fi
-
-    log "═══ Done ═══"
-    exit 0
-fi
-
-# ─── Outcomes-only (Docker) ───────────────────────────────────────────────────
+# ─── Outcomes-only ──────────────────────────────────────────────────────────
 if [[ "$OUTCOMES_ONLY" == true ]]; then
-    log "═══ THE TENTH FLOOR AI — outcomes check ═══"
-    log "Building pipeline image..."
-    docker compose build pipeline
-
-    log "Running outcome checker..."
-    docker compose run --rm \
-        -e TENTH_FLOOR_ROOT=/app \
-        pipeline \
-        python -m tenth_floor.check_outcomes
-
+    log "═══ Outcome check (local) ═══"
+    "$PYTHON_BIN" -m tenth_floor.check_outcomes
     log "═══ Done ═══"
     exit 0
 fi
 
-# ─── Full run: vLLM + pipeline (Docker) ──────────────────────────────────────
+# ─── Headless local pipeline run ────────────────────────────────────────────
+# Assumes vLLM is already serving on VLLM_PORT. Start it from the dashboard
+# LLM pill, or with: nohup .vllmenv/bin/vllm serve ... >> logs/vllm.log &
+VLLM_HOST="${VLLM_HOST:-localhost}"
+VLLM_PORT="${VLLM_PORT:-8000}"
+HEALTH_URL="http://${VLLM_HOST}:${VLLM_PORT}/v1/models"
+curl -sf "${HEALTH_URL}" >/dev/null 2>&1 || die "vLLM not reachable at ${HEALTH_URL} — start it first"
+
 TODAY="$(date -u +%Y-%m-%d)"
-log "═══ THE TENTH FLOOR AI — ${TODAY} ═══"
-log "Pipeline args: ${PIPELINE_ARGS:-<none>}"
+LOG_DIR="${SCRIPT_DIR}/logs"
+mkdir -p "$LOG_DIR"
 
-# Ensure data and logs directories exist before bind-mounting
-mkdir -p "${SCRIPT_DIR}/data" "${SCRIPT_DIR}/logs"
+log "═══ Local pipeline run — ${TODAY} ═══"
+# shellcheck disable=SC2086
+"$PYTHON_BIN" -m tenth_floor.main $PIPELINE_ARGS 2>&1 | tee -a "${LOG_DIR}/pipeline_${TODAY}.log"
 
-# Export so docker-compose.yml substitution picks it up
-export PIPELINE_ARGS
-
-log "Starting vLLM + pipeline (this tears down automatically when pipeline exits)..."
-docker compose up \
-    --build \
-    --abort-on-container-exit \
-    --exit-code-from pipeline
+DRY_RUN=false
+for a in $PIPELINE_ARGS; do [[ "$a" == "--dry-run" ]] && DRY_RUN=true; done
+if [[ "$DRY_RUN" == false ]]; then
+    log "Running outcome checker..."
+    "$PYTHON_BIN" -m tenth_floor.check_outcomes 2>&1 | tee -a "${LOG_DIR}/outcomes_${TODAY}.log" || true
+    DB_PATH="${SCRIPT_DIR}/data/playbook_history.db"
+    [[ -f "$DB_PATH" ]] && sqlite3 "$DB_PATH" ".backup ${DB_PATH}.bak" && log "DB backed up"
+fi
 
 log "═══ Done ═══"

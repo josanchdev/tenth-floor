@@ -177,6 +177,22 @@ class YFinanceDataFetcher:
 
         return df
 
+    def fetch_last_price(self, symbol: str) -> float:
+        """Return the most recent quote price via yfinance fast_info.
+
+        Used for re-snapping ``entry_price`` right before a signal is
+        persisted, so the published entry reflects the price at publish
+        time rather than at the start of the pipeline.
+        """
+        ticker = yf.Ticker(symbol)
+        try:
+            last = ticker.fast_info["last_price"]
+        except (KeyError, AttributeError):
+            last = ticker.info.get("regularMarketPrice")
+        if last is None:
+            raise ValueError(f"No last price for {symbol}")
+        return float(last)
+
     def fetch_ohlcv(
         self,
         symbol: str,
