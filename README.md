@@ -105,7 +105,9 @@ classes.
 
 ### Requirements
 
-- Python 3.12+
+- Python 3.12 or 3.13 (`pandas-ta` depends on `numba`, which has no 3.14
+  build yet — on a newer default interpreter, create the venv with
+  `python3.13 -m venv .venv`)
 - Node 20+ (for the dashboard)
 - An OpenAI-compatible inference endpoint. The setup this was built
   around is [vLLM](https://docs.vllm.ai/) serving Qwen3-32B-AWQ locally,

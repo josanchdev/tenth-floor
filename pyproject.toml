@@ -9,7 +9,10 @@ description = "The Tenth Floor — personal multi-asset swing-trade research pip
 authors = [{name = "Jorge Sánchez Aguilar", email = "jsanagui@gmail.com"}]
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.12"
+# Upper bound is set by pandas-ta, which requires numba (>=3.10,<3.14).
+# Without it, pip on 3.14 resolves everything else and only fails once it
+# reaches numba's build, with an error that names numba rather than Python.
+requires-python = ">=3.12,<3.14"
 
 dependencies = [
     "ccxt>=4.3.0",                    # Binance data (read-only)
