@@ -9,9 +9,11 @@ Three specialist LLM agents (MacroAnalyst, TradeAnalyst, RiskReviewer)
 analyse 20 assets daily across crypto, US equities, ETFs, and
 commodities. Python computes indicators and validates the LLM's chosen
 entry/stop/target for sanity. Runs are triggered manually from a React
-dashboard — no cron, no scheduler, no automated publishing. Approved
-signals are tracked to resolution so expectancy in R units can be
-measured from real outcomes rather than a backtest.
+dashboard — no cron, no scheduler. A run that publishes signals posts
+them to Discord and Notion if those credentials are configured in
+`.env`, and does nothing if they aren't. Approved signals are tracked to
+resolution so expectancy in R units can be measured from real outcomes
+rather than a backtest.
 
 The design was originally scoped as a 12-month forward test with
 pre-committed decision gates — see [plan.md](plan.md). It never got
@@ -90,7 +92,7 @@ Python validation (sanity checks) ──→ valid proposals
                                                     ↓
 RiskReviewer (1 LLM call per proposal) ──→ approved signals + conviction
                                                     ↓
-Signal cap (max 5 / run) ──→ SignalLogger + dashboard
+Signal cap (2–5 / run, per profile) ──→ SignalLogger + dashboard
 ```
 
 **Hard constraints:** spot only · LONG only · no leverage · no futures ·
@@ -104,10 +106,12 @@ classes.
 ### Requirements
 
 - Python 3.12+
-- GPU with ≥ 24 GB VRAM (RTX 3090 with AWQ) or ≥ 32 GB (RTX 5090)
-- [vLLM](https://docs.vllm.ai/) serving Qwen3-32B-AWQ or any
-  OpenAI-compatible model
 - Node 20+ (for the dashboard)
+- An OpenAI-compatible inference endpoint. The setup this was built
+  around is [vLLM](https://docs.vllm.ai/) serving Qwen3-32B-AWQ locally,
+  which wants ≥ 24 GB VRAM (RTX 3090 with AWQ) or ≥ 32 GB (RTX 5090) —
+  but any OpenAI-compatible server works, local GPU or not. See
+  [Pointing it at a model](#run-the-dashboard).
 - A [Langfuse](https://langfuse.com) account for LLM tracing (free tier)
 
 ### Install
@@ -115,9 +119,13 @@ classes.
 ```bash
 git clone https://github.com/josanchdev/tenth-floor.git
 cd tenth-floor
-pip install -e ".[dev]"
-cd dashboard && npm install && cd ..
-cp .env.example .env        # fill in LANGFUSE_* keys
+
+python -m venv .venv         # dashboard.sh and run.sh both expect ./.venv
+.venv/bin/pip install -e ".[dev]"
+
+cd dashboard && pnpm install && cd ..   # npm works too; the lockfile is pnpm's
+
+cp .env.example .env         # fill in LANGFUSE_* keys
 ```
 
 ### Run the dashboard
@@ -126,10 +134,25 @@ cp .env.example .env        # fill in LANGFUSE_* keys
 ./dashboard.sh              # starts FastAPI (8765) + Vite (5173)
 ```
 
-Open <http://localhost:5173>, start vLLM from the LLM status pill, then
-click **Run pipeline**. Events stream live; approved signals land in
-`data/playbook_history.db` (git-ignored, created on first run from
-[db/schema.sql](db/schema.sql)) and surface in the Track Record view.
+Open <http://localhost:5173>, then click **Run pipeline**. Events stream
+live; approved signals land in `data/playbook_history.db` (git-ignored,
+created on first run from [db/schema.sql](db/schema.sql)) and surface in
+the Track Record view.
+
+**Pointing it at a model.** The Run button unlocks once an
+OpenAI-compatible server answers at `LLM_BASE_URL` (default
+`http://localhost:8000/v1`) — the status pill probes `/v1/models` on a
+timer and does not care who started the server. Two paths:
+
+- *Managed vLLM* — the pill's start button spawns `vllm serve` from a
+  separate virtualenv at `./.vllmenv`, which you have to create
+  yourself (`python -m venv .vllmenv && .vllmenv/bin/pip install vllm`).
+  This is the path that wants the GPU listed above.
+- *Anything else* — set `LLM_BASE_URL` in `.env` to Ollama
+  (`http://localhost:11434/v1`), a remote vLLM, or any hosted
+  OpenAI-compatible endpoint, and skip the local GPU entirely. Signal
+  quality will differ from the Qwen3-32B setup this was built around,
+  but the pipeline itself is provider-agnostic.
 
 <!-- Screenshot: drop the PNG at assets/dashboard-runner.png and uncomment.
      Runner modal — phase rail + per-asset cards streaming over the WebSocket.
@@ -139,8 +162,8 @@ click **Run pipeline**. Events stream live; approved signals land in
 ### CLI alternatives
 
 ```bash
-./run.sh --local              # headless local pipeline (vLLM must already be running)
-./run.sh --outcomes-only      # resolve PENDING/OPEN signals only
+./run.sh --local              # headless local pipeline (inference server must be up)
+./run.sh --outcomes-only      # resolve OPEN signals only
 ./run.sh --reset-db           # wipe + recreate the signal DB from schema.sql
 pytest                        # all tests (mocked, no network)
 ```
@@ -155,6 +178,8 @@ pytest                        # all tests (mocked, no network)
 | `LLM_BASE_URL`         | no  | Override inference server URL (default: `http://localhost:8000/v1`) |
 | `VLLM_MODEL`           | no  | Model id for the dashboard LLM launcher |
 | `VLLM_PORT`            | no  | vLLM port (default 8000) |
+| `DISCORD_WEBHOOK_URL`  | no  | If set, published signals are posted to Discord |
+| `NOTION_INTEGRATION_TOKEN` / `NOTION_SIGNAL_DATABASE_ID` | no | If set, each published signal is journaled to Notion |
 
 See [.env.example](.env.example) for the full list and hardware profile
 variants in [.env.3090](.env.3090) / [.env.5090](.env.5090).
@@ -187,6 +212,7 @@ tenth-floor/
 │   ├── data/                   # ccxt / yfinance / sentiment / typed models
 │   ├── features/               # TA indicators + PairSnapshot assembly
 │   ├── agents/                 # MacroAnalyst, TradeAnalyst, RiskReviewer
+│   ├── notifications/          # Discord + Notion publishing (opt-in via .env)
 │   ├── db/signal_logger.py     # SQLite signal persistence
 │   └── api/                    # FastAPI backend (signals, runs, llm, ws)
 ├── dashboard/                  # Vite + React 19 + Tailwind v4 frontend
