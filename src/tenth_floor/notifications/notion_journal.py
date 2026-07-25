@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
 import requests
 
@@ -85,7 +86,7 @@ def create_signal_entry(
 
     page_content = _build_open_content(entry, risk_pct, reward_pct, macro_regime)
 
-    payload = {
+    payload: dict[str, Any] = {
         "parent": {"database_id": database_id},
         "properties": {
             "Asset": {"title": [{"text": {"content": entry.symbol}}]},
@@ -106,7 +107,7 @@ def create_signal_entry(
     try:
         resp = requests.post(f"{_NOTION_API}/pages", json=payload, headers=hdrs, timeout=_TIMEOUT)
         resp.raise_for_status()
-        page_id = resp.json()["id"]
+        page_id: str = resp.json()["id"]
         logger.info("Notion: created journal page %s for %s", page_id, entry.symbol)
         return page_id
     except Exception:

@@ -604,12 +604,12 @@ def _run_pipeline_body(
 
     snap_by_symbol = {s.symbol: s for s in candidates}
     for proposal in buy_proposals:
-        snap = snap_by_symbol.get(proposal.symbol)
-        if snap is None:
+        proposal_snap = snap_by_symbol.get(proposal.symbol)
+        if proposal_snap is None:
             funnel.validation_failed += 1
             logger.warning("Validation FAIL  %s — no snapshot for proposal", proposal.symbol)
             continue
-        result = validate_proposal(proposal, current_price=snap.current_price)
+        result = validate_proposal(proposal, current_price=proposal_snap.current_price)
         if result.valid:
             valid_proposals.append(proposal)
             validated_rr[proposal.symbol] = result.reward_risk_ratio
@@ -668,8 +668,8 @@ def _run_pipeline_body(
     proposal_map = {p.symbol: p for p in valid_proposals}
 
     for review in reviewed:
-        proposal = proposal_map.get(review.symbol)
-        if not proposal:
+        reviewed_proposal = proposal_map.get(review.symbol)
+        if not reviewed_proposal:
             continue
 
         verdict = (
@@ -684,27 +684,27 @@ def _run_pipeline_body(
         rr = validated_rr[review.symbol]  # must exist — only validated proposals reach here
 
         entry = PlaybookEntry(
-            symbol=proposal.symbol,
-            timeframe=proposal.timeframe,
+            symbol=reviewed_proposal.symbol,
+            timeframe=reviewed_proposal.timeframe,
             report_date=today,
             verdict=verdict,
             verdict_reasoning=review.reasoning,
-            direction=proposal.direction,
-            entry_price=proposal.entry_price,
-            stop_loss=proposal.stop_loss,
-            take_profit=proposal.take_profit,
+            direction=reviewed_proposal.direction,
+            entry_price=reviewed_proposal.entry_price,
+            stop_loss=reviewed_proposal.stop_loss,
+            take_profit=reviewed_proposal.take_profit,
             reward_risk_ratio=rr,
             confidence_score=review.confidence,
             conviction=review.conviction,
             suggested_risk_pct=risk_pct,
-            rationale=proposal.rationale,
+            rationale=reviewed_proposal.rationale,
             risk_notes=review.risk_notes,
             rank=1,  # will be re-ranked below
         )
         entries.append(entry)
 
         event_bus.emit(run_id, EventType.REVIEWER_DECISION, {
-            "symbol": proposal.symbol,
+            "symbol": reviewed_proposal.symbol,
             "verdict": verdict.value,
             "conviction": review.conviction.value if hasattr(review.conviction, "value") else str(review.conviction),
             "confidence": review.confidence,

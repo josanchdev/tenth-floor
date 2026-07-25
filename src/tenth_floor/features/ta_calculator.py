@@ -52,7 +52,7 @@ def _safe_isnan(x):  # type: ignore[no-untyped-def]
     return _orig_np_isnan(arr)
 
 
-np.isnan = _safe_isnan
+np.isnan = _safe_isnan  # type: ignore[assignment]  # deliberate, restored below
 
 import pandas as pd  # noqa: E402
 import pandas_ta as ta  # noqa: F401, E402 — attaches .ta accessor to DataFrame

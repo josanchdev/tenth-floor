@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import re
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import yaml
 from dotenv import load_dotenv
@@ -72,7 +72,8 @@ def _load_models_config() -> dict:
     """Load and return the full ``config/models.yaml``."""
     path = CONFIG_DIR / "models.yaml"
     with open(path, encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+        cfg: dict[Any, Any] = yaml.safe_load(fh)
+    return cfg
 
 
 def load_agent_config(agent_name: str) -> dict:
@@ -124,7 +125,7 @@ def load_risk_profile(profile: str | None = None) -> dict:
     """
     path = CONFIG_DIR / "risk_profile.json"
     with open(path, encoding="utf-8") as fh:
-        base = json.load(fh)
+        base: dict[Any, Any] = json.load(fh)
 
     name = profile or _active_profile or os.environ.get("RISK_PROFILE")
     if name:
