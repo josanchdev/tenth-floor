@@ -24,6 +24,57 @@ close to that horizon.
 
 ---
 
+## Results
+
+The experiment is stopped. It ran live for roughly one week in April
+2026 and was never resumed.
+
+Approximately five or six signals reached resolution in that window.
+None were profitable; a couple came close to target before reversing.
+Exact figures are not recoverable — the SQLite signal database was
+git-ignored and lived on a Linux install that has since been wiped, and
+the Notion journal has no surviving entries. Every number here is
+approximate and reconstructed from memory, which is precisely the
+failure mode the tracking was meant to prevent.
+
+**What this does not show.** Five or six resolved signals is far too
+small a sample to say anything about edge in either direction. The plan
+pre-committed to a decision gate at N ≥ 50 resolved trades and a
+null-hypothesis test at N ≥ 80 ([plan.md](plan.md)); the run ended an
+order of magnitude short of the first one. A losing streak that short is
+unremarkable under a positive-expectancy process and equally
+unremarkable under a negative one. The honest summary is that the
+experiment produced no evidence — not that the pipeline was shown to
+have none.
+
+**Model constraint.** All inference ran locally on a consumer GPU with
+Qwen3-32B-AWQ. Nothing here transfers to what a frontier model would do
+with the same prompts and context.
+
+**What I'd do differently**
+
+1. **Build the offline replay harness first.** There is no way to
+   re-score a prompt change against past data: V3's deterministic
+   backtester was deleted along with the mechanical gates, and the
+   AI-first pipeline can only be evaluated by running it live and
+   waiting. Caching `PairSnapshot`s and replaying prompt variants
+   against known outcomes would have made an iteration cost minutes
+   instead of weeks.
+2. **Separate the publishing cap from the measurement sample.** The
+   signal cap (a handful per day, max 1 per sector across 20 assets) is
+   a reasonable publishing rule and a poor evidence-collection rule.
+   Runner-up BUYs are already persisted as `tier='SESSION'`, but
+   `check_outcomes` only resolves `tier='PUBLISHED'`
+   (`SignalLogger.get_active_signals`). Tracking them too would have
+   multiplied the resolved-trade count at zero extra inference cost.
+3. **Treat the signal DB as an experimental artifact, not runtime
+   state.** Git-ignoring `data/playbook_history.db` was right for the
+   repo and wrong for the experiment. A periodic export of resolved
+   signals to a committed CSV would have preserved the only results this
+   project ever produced.
+
+---
+
 ## Pipeline
 
 ```
