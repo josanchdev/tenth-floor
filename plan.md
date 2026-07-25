@@ -1,12 +1,17 @@
 # The Tenth Floor AI — Project Plan
 
-> **Historical document.** This is the plan as written in early 2026, preserved
-> unedited below. The experiment ran for about a week in April 2026 and stopped;
-> the phases, decision gates, and null-hypothesis criteria were never reached.
-> It is kept because the pre-committed stopping rules are the part worth
-> reading. Figures here reflect the project as it stood when written — the
-> universe was later trimmed from 36 assets to the 20 in `config/universe.json`.
-> See [README.md](README.md#results) for what actually happened.
+> **Historical document.** This is the plan as written in early 2026. Phase 1
+> was built and the pipeline ran live for about a week in April 2026, then
+> stopped — the later phases, decision gates, and null-hypothesis criteria were
+> never reached. It is kept because the pre-committed stopping rules are the
+> part worth reading.
+>
+> The body below is as written, with two exceptions: the Phase 1 status list
+> has been corrected (it was never updated as the work landed), and third-person
+> references to me have been made first person. Figures reflect the project as
+> it stood when written — the universe was later trimmed from 36 assets to the
+> 20 in `config/universe.json`. See [README.md](README.md#results) for what
+> actually happened.
 
 ---
 
@@ -19,7 +24,7 @@ Build a personal AI-assisted swing trade research system with verified positive 
 **What this is NOT:**
 - A commercial product (shelved until track record is proven)
 - A backtested system (forward testing only — cleaner data, no overfitting risk)
-- An automated service — the pipeline never runs on a schedule. It runs when Jorge clicks a button in the dashboard. There is no cron, no systemd timer, no auto-start.
+- An automated service — the pipeline never runs on a schedule. It runs when I click a button in the dashboard. There is no cron, no systemd timer, no auto-start.
 - A system for someone else — this is personal, local, free
 
 ---
@@ -38,19 +43,30 @@ Build a personal AI-assisted swing trade research system with verified positive 
 
 ---
 
-## Current Status
+## Final Status
 
-**Phase 1 — Fix the Foundation (Now → 30 days)**
+**Phase 1 — Fix the Foundation: complete.**
 
 - [x] Step 1: Codebase cleanup
-- [ ] Step 2: Signal quality iteration (rubric exit gate — see Step 2)
+- [x] Step 2: Signal quality iteration (rubric exit gate — see Step 2)
 - [x] Step 3: Event emitter added to pipeline
-- [ ] Step 4: FastAPI backend built
-- [ ] Step 5: React dashboard built
-- [ ] Step 6: Docker integration
-- [ ] Step 7: End to end test — pipeline runs from browser
+- [x] Step 4: FastAPI backend built
+- [x] Step 5: React dashboard built
+- [x] Step 6: Docker integration
+- [x] Step 7: End to end test — pipeline runs from browser
 
-**Phase 1 is complete when:** Pipeline runs from browser button with real-time asset-by-asset feedback, AND 8 of the last 10 generated signals pass all 5 quality rubric criteria (see Step 2), AND none of those 10 make Jorge cringe on read.
+Steps 1 and 3–7 are evidenced in the repository: `src/tenth_floor/events.py`,
+`src/tenth_floor/api/` (FastAPI + WebSocket), `dashboard/` (Vite + React), and
+`Dockerfile` / `docker-compose.yml` (vllm, api, dashboard, pipeline). Discord
+and Notion publishing landed alongside them in
+`src/tenth_floor/notifications/`. Step 2 was prompt iteration rather than
+code — the TradeAnalyst and RiskReviewer prompts went through several rounds —
+but the per-signal rubric grading lived in the Notion journal, which has not
+survived, so that part is no longer auditable.
+
+**Phase 1 was complete when:** the pipeline ran from the browser button with real-time asset-by-asset feedback, AND 8 of the last 10 generated signals passed all 5 quality rubric criteria (see Step 2), AND none of those 10 made me cringe on read.
+
+Phase 2 was where the experiment stopped — see [README.md](README.md#results).
 
 ---
 
@@ -74,7 +90,7 @@ Run the pipeline. Read every output. If reasoning feels templated, generic, or s
 
 Self-grade each signal during journaling — takes <30 seconds. Use Opus only as a tiebreaker when uncertain about a specific criterion (Opus stylistic bias makes single-number scoring unreliable, but it's fine for adjudicating "does this reference a specific price level: yes/no").
 
-**Phase 1 exit gate:** 8 of the last 10 generated signals pass all 5 criteria, AND Jorge doesn't cringe at any of them on second read.
+**Phase 1 exit gate:** 8 of the last 10 generated signals pass all 5 criteria, AND I don't cringe at any of them on second read.
 
 **Priority 2: Operational dashboard**
 
@@ -260,7 +276,7 @@ src/tenth_floor/api/
 - **Typography.** Geist + Geist Mono via Google Fonts. Tabular figures for all numeric KPIs so digits don't jitter.
 - **Empty/loading/error states are designed, not afterthoughts.** Skeleton loaders match real component dimensions. Empty states explain *why* and *what next*.
 - **Dark only.** No light mode, no theme toggle.
-- **Done = Jorge would screenshot it and post it.** If you wouldn't, it's not done.
+- **Done = I would screenshot it and post it.** If you wouldn't, it's not done.
 
 **Design tokens (locked):**
 - Background: `#0A0712` (deep indigo-near-black)
@@ -279,7 +295,7 @@ src/tenth_floor/api/
 - Hero: date, idle/running status line, prominent **Run** button (purple gradient, subtle breathing glow)
 - KPI strip: expectancy in R units with 95% CI, win rate %, avg R:R achieved, open positions (numbers tween 0 → value on load, tabular figures)
 - Equity curve: Visx LineChart showing **cumulative R** over time (not cumulative R:R — that's not a real number). Draws on scroll-into-view via path-length animation.
-- Concentration band: small per-day badge on the equity curve showing asset-class diversity of that day's published set (max share of any single class). Lets Jorge eyeball whether bad days correlate with concentrated days.
+- Concentration band: small per-day badge on the equity curve showing asset-class diversity of that day's published set (max share of any single class). Lets me eyeball whether bad days correlate with concentrated days.
 - Today's signals — **three tiers**, collapsing visual weight:
   - **Published (top 5)** — full cards, entry/SL/TP, rationale, mini price chart
   - **Session signals** — compact chip row, 24h visibility, clickable to drawer

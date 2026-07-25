@@ -31,8 +31,7 @@ Each approved signal is a `PlaybookEntry` (defined in `data/models.py`):
 | `verdict` | `PlaybookVerdict` | `APPROVED` or `REJECTED` |
 | `verdict_reasoning` | `str` | RiskReviewer reasoning for the verdict |
 | `direction` | `SignalDirection` | Always `LONG` for approved signals |
-| `entry_zone_low` | `float` | Lower bound of entry zone |
-| `entry_zone_high` | `float` | Upper bound of entry zone |
+| `entry_price` | `float` | Entry price (the snapshot price at publication) |
 | `stop_loss` | `float` | Stop-loss price (LLM-chosen, structurally anchored) |
 | `take_profit` | `float` | Take-profit price (LLM-chosen, structurally anchored) |
 | `reward_risk_ratio` | `float` | Reward-to-risk ratio (Python-verified) |
@@ -53,7 +52,7 @@ The LLM is the trader. Python is the risk manager.
 
 1. **MacroAnalyst** (1 LLM call) reads VIX, Fear & Greed, DXY and outputs a macro regime (risk_on/risk_off/mixed/transitioning) with per-asset-class impact assessments.
 
-2. **TradeAnalyst** (1 LLM call per candidate) receives full TA context + macro frame. Decides BUY or SKIP. If BUY: picks entry zone, SL, TP with structural reasoning anchored to support/resistance levels.
+2. **TradeAnalyst** (1 LLM call per candidate) receives full TA context + macro frame. Decides BUY or SKIP. If BUY: picks entry, SL, TP with structural reasoning anchored to support/resistance levels.
 
 3. **Python validation** checks LLM output for sanity — not a judgment call, a safety net:
    - No SHORT (spot only, LONG only)
@@ -61,9 +60,8 @@ The LLM is the trader. Python is the risk manager.
    - SL not > 15% below entry (prevents absurd stops)
    - TP not > 50% above entry (prevents fantasy targets)
    - R:R >= 1.5 hard floor (business integrity)
-   - Entry zone low < entry zone high
 
-4. **RiskReviewer** (1 LLM call, sees ALL proposals) reviews as a portfolio: correlation, sector concentration, macro alignment, conviction tiers. Approves the strongest, rejects the rest.
+4. **RiskReviewer** (1 LLM call per proposal) reviews each proposal in macro-aware ranked order, carrying running portfolio state — already-approved signals plus existing open ones — into each call: correlation, sector concentration, macro alignment, conviction tiers.
 
 5. **Signal cap** limits output to max_daily_signals (default: 2 production, 3 validation).
 
@@ -87,15 +85,14 @@ The `UNIQUE(pair, timeframe, report_date)` constraint prevents duplicate signals
 ### Signal Lifecycle
 
 ```
-PENDING ──> OPEN ──> HIT_TP  (target reached)
-                 ──> HIT_SL  (stop hit)
-                 ──> EXPIRED (14 days, no resolution)
+OPEN ──> HIT_TP  (target reached)
+     ──> HIT_SL  (stop hit)
+     ──> EXPIRED (no resolution within the expiry window)
 ```
 
-- **PENDING**: Signal published but price has not entered the entry zone yet.
-- **OPEN**: A candle low dipped into the entry zone — signal is active. `entered_at` timestamp is recorded.
+- **OPEN**: The signal fills immediately at the snapshot price when published. There is no PENDING tier and no entry zone — both were removed in `db/migrations/003_drop_entry_zone_and_pending.sql`, because a "wait for the zone" model adds nothing at a daily cadence.
 - **HIT_TP / HIT_SL**: Candle high/low reached TP or SL (chronological order, first hit wins; same-candle ambiguity assumes SL first — conservative).
-- **EXPIRED**: 14 calendar days with no TP or SL hit.
+- **EXPIRED**: No TP or SL hit within the asset class's expiry window (`config/universe.json`): 14 days for crypto, 10 for equities, ETFs and commodities.
 
 ### MAE / MFE Tracking
 
@@ -104,4 +101,4 @@ During the candle walk, the outcome checker records:
 - **MAE** (Max Adverse Excursion): lowest low since entry — measures worst drawdown experienced.
 - **MFE** (Max Favourable Excursion): highest high since entry — measures best unrealised gain.
 
-Outcome tracking runs via `check_outcomes.py`. See [deployment.md](deployment.md) for scheduling.
+Outcome tracking runs via `check_outcomes.py`, either as phase 2 of a pipeline run or on its own with `./run.sh --outcomes-only`. The candle timeframe is per asset class (`config/universe.json`): 4h for crypto, 1d for everything else. There is no scheduler — runs are triggered manually.
