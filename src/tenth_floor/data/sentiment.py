@@ -27,7 +27,7 @@ import logging
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
-from typing import Final
+from typing import Any, Final
 
 import feedparser
 import yaml
@@ -54,7 +54,8 @@ def _load_sentiment_config() -> dict:
     path = CONFIG_DIR / "services.yaml"
     with open(path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
-    return cfg.get("sentiment", {})
+    section: dict[Any, Any] = cfg.get("sentiment", {})
+    return section
 
 
 # ---------------------------------------------------------------------------

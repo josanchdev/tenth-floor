@@ -23,7 +23,6 @@ dependencies = [
     "python-dotenv>=1.0.0",           # .env loading
     "pyyaml>=6.0.1",                  # YAML config loading
     "yfinance>=0.2.36",               # Equity/ETF/commodity OHLCV (Yahoo Finance)
-    "exchange_calendars>=4.5.0",      # Market calendars (trading days, holidays)
     "fastapi>=0.115.0",               # Dashboard backend API
     "uvicorn[standard]>=0.32.0",      # ASGI server + WebSocket support
     "httpx>=0.27.0",                  # Async HTTP client (FastAPI tests + llm_manager readiness probe)
@@ -57,6 +56,25 @@ select = ["E", "F", "I", "UP", "B"]   # pycodestyle, pyflakes, isort, pyupgrade,
 ignore = ["E501", "UP047"]              # line-length handled by formatter; UP047 = PEP 695 type params (not yet widespread)
 
 [tool.mypy]
+# Without this plugin mypy treats every pydantic Field(None, ...) default as a
+# required argument, which produced ~18 phantom "missing named argument" errors.
+plugins = ["pydantic.mypy"]
 python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
+
+# Third-party packages that ship no type information. Listing them explicitly
+# (rather than setting a global ignore_missing_imports) keeps the check strict
+# for everything else, so a genuinely missing first-party import still fails.
+[[tool.mypy.overrides]]
+module = [
+    "ccxt.*",
+    "feedparser.*",
+    "langfuse.*",
+    "pandas.*",
+    "pandas_ta.*",
+    "pyarrow.*",
+    "yaml.*",
+    "yfinance.*",
+]
+ignore_missing_imports = true
