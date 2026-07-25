@@ -22,10 +22,9 @@ def _make_signal(**overrides):
         "timeframe": "1d",
         "report_date": "2026-04-11",
         "asset_class": "crypto",
-        "status": "PENDING",
+        "status": "OPEN",
         "direction": "long",
-        "entry_low": 60000.0,
-        "entry_high": 61000.0,
+        "entry_price": 60500.0,
         "stop_loss": 58000.0,
         "take_profit": 66000.0,
         "reward_risk": 2.0,
@@ -78,7 +77,7 @@ class TestListSignals:
         fake_signals = [
             _make_signal(signal_id="a", status="HIT_TP"),
             _make_signal(signal_id="b", status="HIT_SL"),
-            _make_signal(signal_id="c", status="PENDING"),
+            _make_signal(signal_id="c", status="EXPIRED"),
         ]
         sl = MagicMock()
         sl.__enter__ = MagicMock(return_value=sl)

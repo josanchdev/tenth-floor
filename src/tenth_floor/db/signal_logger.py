@@ -384,49 +384,6 @@ class SignalLogger:
         ).fetchone()
         return row[0] if row else None
 
-    # ------------------------------------------------------------------
-    # Tweet posting methods
-    # ------------------------------------------------------------------
-
-    def log_tweet(
-        self,
-        tweet_id: str,
-        report_date: str,
-        tweet_text: str,
-        tweet_type: str,
-        thread_tweets: list[str] | None = None,
-        draft_file: str | None = None,
-        image_paths: list[str] | None = None,
-    ) -> None:
-        """Insert a posted tweet record."""
-        import json as _json
-
-        now = datetime.now(UTC).isoformat()
-        self._conn.execute(
-            """
-            INSERT OR IGNORE INTO posted_tweets (
-                tweet_id, created_at, report_date, tweet_text, tweet_type,
-                thread_tweets, draft_file, image_paths
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                tweet_id, now, report_date, tweet_text, tweet_type,
-                _json.dumps(thread_tweets) if thread_tweets else None,
-                draft_file,
-                _json.dumps(image_paths) if image_paths else None,
-            ),
-        )
-        self._conn.commit()
-        logger.info("Tweet logged  id=%s  type=%s  date=%s", tweet_id, tweet_type, report_date)
-
-    def tweet_exists(self, report_date: str, tweet_type: str) -> bool:
-        """Check if a tweet was already posted for this date+type."""
-        row = self._conn.execute(
-            "SELECT 1 FROM posted_tweets WHERE report_date = ? AND tweet_type = ?",
-            (report_date, tweet_type),
-        ).fetchone()
-        return row is not None
-
     def close(self) -> None:
         """Close the database connection."""
         self._conn.close()
