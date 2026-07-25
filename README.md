@@ -154,10 +154,7 @@ timer and does not care who started the server. Two paths:
   quality will differ from the Qwen3-32B setup this was built around,
   but the pipeline itself is provider-agnostic.
 
-<!-- Screenshot: drop the PNG at assets/dashboard-runner.png and uncomment.
-     Runner modal — phase rail + per-asset cards streaming over the WebSocket.
 ![Pipeline runner — phase rail and per-asset decisions streaming live](assets/dashboard-runner.png)
--->
 
 ### CLI alternatives
 
