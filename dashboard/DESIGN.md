@@ -10,7 +10,7 @@ This document is the source of truth for visual tokens, motion rules, and compon
 
 Three rules, in order of priority:
 
-1. **Daily-use friction is compound interest.** Jorge opens this dashboard once a day for a year. Every point of friction or aesthetic fatigue compounds. Design for the 365th visit, not the first.
+1. **Daily-use friction is compound interest.** I open this dashboard once a day for a year. Every point of friction or aesthetic fatigue compounds. Design for the 365th visit, not the first.
 2. **Silence is the default.** The pipeline often produces zero signals. Empty states are the most important states. Design them with intention.
 3. **Glow = state transition, never decoration.** Motion is how information arrives on screen. If an animation doesn't represent a state change, delete it.
 
