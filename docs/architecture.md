@@ -37,7 +37,7 @@ Signal cap (business rule) ──→ featured signals ──→ SignalLogger + D
 | Agent | Calls | Role |
 |-------|-------|------|
 | **MacroAnalyst** | 1 per run | Reads VIX, F&G, DXY. Outputs macro regime + per-asset-class impact. Runs first — its output frames every TradeAnalyst call. |
-| **TradeAnalyst** | 1 per candidate | Receives full TA context + macro frame. Decides BUY or SKIP. If BUY: picks entry zone, SL, TP with structural reasoning. |
+| **TradeAnalyst** | 1 per candidate | Receives full TA context + macro frame. Decides BUY or SKIP. If BUY: picks entry, SL, TP with structural reasoning. |
 | **RiskReviewer** | 1 per proposal | Reviews proposals one at a time, in macro-aware ranked order, carrying running portfolio state (already-approved signals + existing open signals) into each call: correlation, sector concentration, conviction tiers. |
 
 ### Python Validation Layer
@@ -51,7 +51,6 @@ Runs after TradeAnalyst, before RiskReviewer. Not a judgment call — a safety n
 | Stop distance | SL not > 15% below entry | Prevents absurd stops |
 | Target distance | TP not > 50% above entry | Prevents fantasy targets |
 | R:R verification | Recalculate from LLM's numbers, must be >= 1.5 | Business integrity |
-| Entry zone | entry_zone_low < entry_zone_high | Basic sanity |
 
 ### Pre-screen
 

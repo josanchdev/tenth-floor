@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,11 @@ from tenth_floor.data.models import (
     SignalDirection,
 )
 from tenth_floor.db.signal_logger import SignalLogger
+
+# Fixtures must stay inside the lookback window that get_recent_signals()
+# applies to report_date, so the date has to be relative to now. A hardcoded
+# date silently ages out of the window and fails the suite months later.
+TODAY = datetime.now(UTC).date().isoformat()
 
 
 @pytest.fixture
@@ -30,7 +36,7 @@ def approved_entry() -> PlaybookEntry:
     return PlaybookEntry(
         symbol="BTCUSDT",
         timeframe="1d",
-        report_date="2026-03-20",
+        report_date=TODAY,
         verdict=PlaybookVerdict.APPROVED,
         verdict_reasoning="Strong setup.",
         direction=SignalDirection.LONG,
@@ -51,7 +57,7 @@ def rejected_entry() -> PlaybookEntry:
     return PlaybookEntry(
         symbol="ETHUSDT",
         timeframe="1d",
-        report_date="2026-03-20",
+        report_date=TODAY,
         verdict=PlaybookVerdict.REJECTED,
         verdict_reasoning="Confidence too low.",
         direction=SignalDirection.LONG,
@@ -84,7 +90,7 @@ class TestSignalLogger:
         signal_id = logger.log(approved_entry)
 
         assert signal_id is not None
-        assert signal_id.startswith("BTCUSDT_2026-03-20_")
+        assert signal_id.startswith(f"BTCUSDT_{TODAY}_")
 
         row = logger.get_signal(signal_id)
         assert row is not None

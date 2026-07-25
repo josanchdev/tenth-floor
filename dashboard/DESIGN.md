@@ -265,7 +265,7 @@ border: 1px solid [semantic color at 0.35 alpha]
 color: [semantic color]
 ```
 
-Variants: PUBLISHED, SESSION, PENDING, OPEN, HIT_TP, HIT_SL, EXPIRED.
+Variants: PUBLISHED, SESSION, OPEN, HIT_TP, HIT_SL, EXPIRED.
 
 ### Section header
 

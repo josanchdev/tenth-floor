@@ -6,7 +6,7 @@
 # This script covers the three things that still need a shell entry point:
 #
 #   ./run.sh --local                 # headless local pipeline run (no Docker)
-#   ./run.sh --outcomes-only         # resolve PENDING/OPEN signals
+#   ./run.sh --outcomes-only         # resolve OPEN signals
 #   ./run.sh --reset-db              # wipe + recreate the signal DB from schema.sql
 #
 # Pipeline args (pairs, --dry-run, --profile, --asset-class) are forwarded

@@ -221,7 +221,7 @@ tenth-floor/
 ├── ROADMAP.md                  # V4 architecture history
 ├── run.sh                      # CLI helper (local / outcomes / reset-db)
 ├── dashboard.sh                # Dev launcher: uvicorn + Vite
-└── docker-compose.yml          # vllm + api + dashboard stack
+└── docker-compose.yml          # vllm + api + dashboard + pipeline stack
 ```
 
 ---
