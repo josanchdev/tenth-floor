@@ -21,13 +21,13 @@ Data (ccxt/yfinance) ──→ TACalculator ──→ Indicators + Structural Le
                                                    ↓
 MacroAnalyst (1 LLM call) ──→ macro frame (regime, per-class impact)
                                                    ↓
-Pre-screen (data-quality only) ──→ ~30-36 candidates
+Pre-screen (data-quality only) ──→ up to 20 candidates
                                                    ↓
 TradeAnalyst (1 LLM call per candidate) ──→ BUY proposals with entry/SL/TP/reasoning
                                                    ↓
 Python validation (sanity checks) ──→ valid proposals
                                                    ↓
-RiskReviewer (1 LLM call, ALL proposals) ──→ approved signals with conviction
+RiskReviewer (1 LLM call per proposal) ──→ approved signals with conviction
                                                    ↓
 Signal cap (business rule) ──→ featured signals ──→ SignalLogger + Discord
 ```
@@ -38,7 +38,7 @@ Signal cap (business rule) ──→ featured signals ──→ SignalLogger + D
 |-------|-------|------|
 | **MacroAnalyst** | 1 per run | Reads VIX, F&G, DXY. Outputs macro regime + per-asset-class impact. Runs first — its output frames every TradeAnalyst call. |
 | **TradeAnalyst** | 1 per candidate | Receives full TA context + macro frame. Decides BUY or SKIP. If BUY: picks entry zone, SL, TP with structural reasoning. |
-| **RiskReviewer** | 1 per run | Sees ALL proposals + macro context + existing open signals. Reviews as a portfolio: correlation, sector concentration, conviction tiers. |
+| **RiskReviewer** | 1 per proposal | Reviews proposals one at a time, in macro-aware ranked order, carrying running portfolio state (already-approved signals + existing open signals) into each call: correlation, sector concentration, conviction tiers. |
 
 ### Python Validation Layer
 
@@ -87,13 +87,14 @@ Everything else goes to TradeAnalyst. The LLM decides quality, not Python.
 | `agents/risk_reviewer.py` | RiskReviewer agent — portfolio-level approval + conviction. |
 | `db/signal_logger.py` | SQLite persistence. `INSERT OR IGNORE` duplicate safety. |
 | `check_outcomes.py` | Signal resolution via candle walk. Routes to ccxt or yfinance per asset class. |
-| `dashboard/app.py` | Streamlit admin dashboard. |
+| `api/` | FastAPI backend — signals, runs, LLM lifecycle, WebSocket event stream. |
+| `dashboard/` | Vite + React 19 + Tailwind v4 frontend (Track Record + Archive views). |
 
 ### `config/`
 
 | File | Purpose |
 |---|---|
-| `universe.json` | 36 assets across 4 asset classes + sector mapping |
+| `universe.json` | 20 assets across 4 asset classes + sector mapping |
 | `risk_profile.json` | Conviction tiers, R:R floor (1.5), confidence threshold, max signals |
 | `models.yaml` | LLM provider, base URL, model name, per-agent temperature + max tokens |
 | `services.yaml` | External service URLs, cache settings, DB path |

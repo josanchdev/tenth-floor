@@ -1,7 +1,13 @@
 # Roadmap — The Tenth Floor AI
 
-> **V4** is the active plan (approved 2026-03-30). Multi-asset universe
-> expansion: crypto + US equities + ETFs + commodities.
+> **Status: archived.** This is an engineering log, preserved as written.
+> **V4** was the active plan (approved 2026-03-30) — multi-asset universe
+> expansion: crypto + US equities + ETFs + commodities. V4 Phase 2 was never
+> completed and the project stopped in April 2026; see
+> [README.md](README.md#results).
+>
+> Universe figures in the V4 sections below (36 assets) predate the trim to the
+> current 20 — `config/universe.json` is what the code actually loads.
 >
 > **V3** is complete. V2 is complete. See summaries below.
 
