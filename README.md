@@ -19,11 +19,6 @@ The design was originally scoped as a 12-month forward test with
 pre-committed decision gates — see [plan.md](plan.md). It never got
 close to that horizon.
 
-<!-- Screenshot: drop the PNG at assets/dashboard-track-record.png and
-     uncomment. Track Record view — KPI row, today's signals, equity curve.
-![Track Record view — portfolio KPIs, today's signals, equity curve](assets/dashboard-track-record.png)
--->
-
 ---
 
 ## Results
