@@ -20,16 +20,11 @@ import sqlite3
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from tenth_floor.config import CONFIG_DIR, PROJECT_ROOT
 from tenth_floor.data.models import PlaybookEntry, PlaybookVerdict  # noqa: F401
-
-if TYPE_CHECKING:
-    # main.py imports this module, so this can only be a type-time import.
-    from tenth_floor.main import FunnelTracker
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +44,7 @@ def _load_db_config() -> dict:
     path = CONFIG_DIR / "services.yaml"
     with open(path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
-    db_cfg: dict[Any, Any] = cfg.get("database", {})
-    return db_cfg
+    return cfg.get("database", {})
 
 
 class SignalLogger:
@@ -229,8 +223,7 @@ class SignalLogger:
             "SELECT COUNT(*) FROM signals "
             "WHERE status = 'OPEN' AND tier = 'PUBLISHED'"
         ).fetchone()
-        count: int = row[0]
-        return count
+        return row[0]
 
     def get_active_signals(self) -> list[dict]:
         """Return all OPEN published signals as dicts.
@@ -288,7 +281,7 @@ class SignalLogger:
     def log_pipeline_run(
         self,
         run_date: str,
-        funnel: FunnelTracker,
+        funnel: object,
         fear_greed_value: int | None = None,
         macro_regime: str | None = None,
     ) -> None:
@@ -322,13 +315,13 @@ class SignalLogger:
             """,
             (
                 run_date, now,
-                funnel.assets_in_universe, funnel.snapshots_built,
-                funnel.pre_screen_passed, funnel.pre_screen_killed,
-                funnel.trade_analyst_buy, funnel.trade_analyst_skip,
-                funnel.trade_analyst_error,
-                funnel.validation_passed, funnel.validation_failed,
-                funnel.reviewer_approved, funnel.reviewer_rejected,
-                funnel.signal_cap_killed, funnel.published,
+                funnel.assets_in_universe, funnel.snapshots_built,  # type: ignore[union-attr]
+                funnel.pre_screen_passed, funnel.pre_screen_killed,  # type: ignore[union-attr]
+                funnel.trade_analyst_buy, funnel.trade_analyst_skip,  # type: ignore[union-attr]
+                funnel.trade_analyst_error,  # type: ignore[union-attr]
+                funnel.validation_passed, funnel.validation_failed,  # type: ignore[union-attr]
+                funnel.reviewer_approved, funnel.reviewer_rejected,  # type: ignore[union-attr]
+                funnel.signal_cap_killed, funnel.published,  # type: ignore[union-attr]
                 _active_profile, fear_greed_value, macro_regime,
             ),
         )

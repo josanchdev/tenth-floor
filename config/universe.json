@@ -60,5 +60,8 @@
 
     {"symbol": "GLD",      "asset_class": "commodity", "sector": "gold"},
     {"symbol": "USO",      "asset_class": "commodity", "sector": "oil"}
-  ]
+  ],
+  "max_per_sector": 1,
+  "max_per_asset_class": 2,
+  "max_featured_signals": 3
 }

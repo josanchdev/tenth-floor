@@ -63,8 +63,8 @@ with the same prompts and context.
    against known outcomes would have made an iteration cost minutes
    instead of weeks.
 2. **Separate the publishing cap from the measurement sample.** The
-   signal cap (a handful per day across 20 assets) is a reasonable
-   publishing rule and a poor evidence-collection rule.
+   signal cap (a handful per day, max 1 per sector across 20 assets) is
+   a reasonable publishing rule and a poor evidence-collection rule.
    Runner-up BUYs are already persisted as `tier='SESSION'`, but
    `check_outcomes` only resolves `tier='PUBLISHED'`
    (`SignalLogger.get_active_signals`). Tracking them too would have

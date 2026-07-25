@@ -24,7 +24,7 @@ import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import ccxt
 import pandas as pd
@@ -67,8 +67,7 @@ def _load_services_config() -> dict:
     path = CONFIG_DIR / "services.yaml"
     with open(path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
-    section: dict[Any, Any] = cfg.get("market_data", {})
-    return section
+    return cfg.get("market_data", {})
 
 
 def _load_timeframes() -> list[str]:
@@ -76,8 +75,7 @@ def _load_timeframes() -> list[str]:
     path = CONFIG_DIR / "risk_profile.json"
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
-    timeframes: list[str] = data.get("timeframes", ["4h", "1d"])
-    return timeframes
+    return data.get("timeframes", ["4h", "1d"])
 
 
 # ---------------------------------------------------------------------------
