@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import pandas as pd
 import pyarrow as pa
@@ -52,7 +52,8 @@ def _load_services_config() -> dict:
     path = CONFIG_DIR / "services.yaml"
     with open(path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
-    return cfg.get("market_data", {})
+    section: dict[Any, Any] = cfg.get("market_data", {})
+    return section
 
 
 class YFinanceDataFetcher:

@@ -604,12 +604,12 @@ def _run_pipeline_body(
 
     snap_by_symbol = {s.symbol: s for s in candidates}
     for proposal in buy_proposals:
-        snap = snap_by_symbol.get(proposal.symbol)
-        if snap is None:
+        proposal_snap = snap_by_symbol.get(proposal.symbol)
+        if proposal_snap is None:
             funnel.validation_failed += 1
             logger.warning("Validation FAIL  %s — no snapshot for proposal", proposal.symbol)
             continue
-        result = validate_proposal(proposal, current_price=snap.current_price)
+        result = validate_proposal(proposal, current_price=proposal_snap.current_price)
         if result.valid:
             valid_proposals.append(proposal)
             validated_rr[proposal.symbol] = result.reward_risk_ratio
