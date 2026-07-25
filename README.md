@@ -1,18 +1,26 @@
 # The Tenth Floor
 
 > Personal multi-asset swing-trade research system. Not a product, not a
-> service — a 12-month forward-testing experiment to see whether an LLM
-> pipeline has actual edge.
+> service — a forward-testing experiment to see whether an LLM pipeline
+> has actual edge. The experiment was stopped after about a week of live
+> running in April 2026; see [Results](#results).
 
 Three specialist LLM agents (MacroAnalyst, TradeAnalyst, RiskReviewer)
-analyse ~36 assets daily across crypto, US equities, ETFs, and
+analyse 20 assets daily across crypto, US equities, ETFs, and
 commodities. Python computes indicators and validates the LLM's chosen
 entry/stop/target for sanity. Runs are triggered manually from a React
-dashboard — no cron, no scheduler, no automated publishing. Every
-approved signal is tracked to resolution so expectancy in R units is
-measurable from real outcomes.
+dashboard — no cron, no scheduler, no automated publishing. Approved
+signals are tracked to resolution so expectancy in R units can be
+measured from real outcomes rather than a backtest.
 
-See [plan.md](plan.md) for the full experiment plan and decision gates.
+The design was originally scoped as a 12-month forward test with
+pre-committed decision gates — see [plan.md](plan.md). It never got
+close to that horizon.
+
+<!-- Screenshot: drop the PNG at assets/dashboard-track-record.png and
+     uncomment. Track Record view — KPI row, today's signals, equity curve.
+![Track Record view — portfolio KPIs, today's signals, equity curve](assets/dashboard-track-record.png)
+-->
 
 ---
 
@@ -23,7 +31,7 @@ Data (ccxt / yfinance) ──→ TACalculator ──→ Indicators + Structural 
                                                     ↓
 MacroAnalyst (1 LLM call) ──→ macro frame (regime, per-class impact)
                                                     ↓
-Pre-screen (data quality only) ──→ ~30–36 candidates
+Pre-screen (data quality only) ──→ up to 20 candidates
                                                     ↓
 TradeAnalyst (1 LLM call per candidate) ──→ BUY proposals with entry/SL/TP
                                                     ↓
@@ -54,7 +62,7 @@ classes.
 ### Install
 
 ```bash
-git clone <repo>
+git clone https://github.com/josanchdev/tenth-floor.git
 cd tenth-floor
 pip install -e ".[dev]"
 cd dashboard && npm install && cd ..
@@ -69,8 +77,13 @@ cp .env.example .env        # fill in LANGFUSE_* keys
 
 Open <http://localhost:5173>, start vLLM from the LLM status pill, then
 click **Run pipeline**. Events stream live; approved signals land in
-[data/playbook_history.db](data/playbook_history.db) and surface in the
-Track Record view.
+`data/playbook_history.db` (git-ignored, created on first run from
+[db/schema.sql](db/schema.sql)) and surface in the Track Record view.
+
+<!-- Screenshot: drop the PNG at assets/dashboard-runner.png and uncomment.
+     Runner modal — phase rail + per-asset cards streaming over the WebSocket.
+![Pipeline runner — phase rail and per-asset decisions streaming live](assets/dashboard-runner.png)
+-->
 
 ### CLI alternatives
 
@@ -102,7 +115,7 @@ variants in [.env.3090](.env.3090) / [.env.5090](.env.5090).
 ```
 tenth-floor/
 ├── config/
-│   ├── universe.json           # 36-asset universe + sector mapping
+│   ├── universe.json           # 20-asset universe + sector mapping
 │   ├── risk_profile.json       # Conviction tiers, R:R floor, max signals
 │   ├── models.yaml             # LLM provider + per-agent config
 │   ├── services.yaml           # External service configuration
@@ -127,7 +140,7 @@ tenth-floor/
 │   └── api/                    # FastAPI backend (signals, runs, llm, ws)
 ├── dashboard/                  # Vite + React 19 + Tailwind v4 frontend
 ├── tests/                      # Unit + integration tests (all mocked)
-├── plan.md                     # 365-day experiment plan — source of truth
+├── plan.md                     # Original 365-day experiment plan (historical)
 ├── ROADMAP.md                  # V4 architecture history
 ├── run.sh                      # CLI helper (local / outcomes / reset-db)
 ├── dashboard.sh                # Dev launcher: uvicorn + Vite
@@ -144,15 +157,18 @@ tenth-floor/
    rules.
 2. **Minimal prompts.** Role + output format only. No prescriptive
    trading checklists, no fixed confluence lists. The LLM reasons freely.
-3. **Dashboard-only trigger.** Runs happen when Jorge clicks a button.
-   No cron, no scheduler.
+3. **Dashboard-only trigger.** Runs happen when I click a button. No
+   cron, no scheduler.
 4. **Glass box.** Every signal carries full LLM reasoning; every call
    is traced in Langfuse.
-5. **Forward testing, not backtesting.** Cleaner data, no overfitting.
-   The metric that matters is expectancy in R over the 12-month window.
+5. **Forward testing, not backtesting.** Cleaner data, no overfitting
+   risk. The metric that matters is expectancy in R, measured from
+   resolved outcomes — which also means it takes a long time to collect
+   enough of them to say anything (see [Results](#results)).
 
 ---
 
 ## License
 
-MIT — for personal research. Not financial advice.
+MIT — see [LICENSE](LICENSE). Personal research code. Not financial
+advice.
