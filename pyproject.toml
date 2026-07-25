@@ -11,9 +11,6 @@ license = "MIT"
 readme = "README.md"
 requires-python = ">=3.12"
 
-[project.urls]
-Repository = "https://github.com/josanchdev/tenth-floor"
-
 dependencies = [
     "ccxt>=4.3.0",                    # Binance data (read-only)
     "pandas>=2.1.0",                  # Dataframes
@@ -40,6 +37,9 @@ dev = [
     "mypy>=1.10.0",
     "black>=24.0.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/josanchdev/tenth-floor"
 
 [project.scripts]
 run-daily = "tenth_floor.main:main"
