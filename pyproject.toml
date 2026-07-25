@@ -57,6 +57,9 @@ select = ["E", "F", "I", "UP", "B"]   # pycodestyle, pyflakes, isort, pyupgrade,
 ignore = ["E501", "UP047"]              # line-length handled by formatter; UP047 = PEP 695 type params (not yet widespread)
 
 [tool.mypy]
+# Without this plugin mypy treats every pydantic Field(None, ...) default as a
+# required argument, which produced ~18 phantom "missing named argument" errors.
+plugins = ["pydantic.mypy"]
 python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true

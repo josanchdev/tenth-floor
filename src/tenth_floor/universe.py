@@ -55,9 +55,6 @@ class Universe:
 
     assets: list[AssetEntry] = field(default_factory=list)
     class_configs: dict[str, AssetClassConfig] = field(default_factory=dict)
-    max_per_sector: int = 1
-    max_per_asset_class: int = 2
-    max_featured_signals: int = 3
 
     def symbols(self, *, asset_class: str | None = None) -> list[str]:
         """Return symbols, optionally filtered by asset class."""
@@ -151,7 +148,4 @@ def load_universe(path: Path | None = None) -> Universe:
     return Universe(
         assets=assets,
         class_configs=class_configs,
-        max_per_sector=data.get("max_per_sector", 1),
-        max_per_asset_class=data.get("max_per_asset_class", 2),
-        max_featured_signals=data.get("max_featured_signals", 3),
     )

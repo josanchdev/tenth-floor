@@ -109,7 +109,10 @@ def check_outcomes(
         try:
             try:
                 data_source = universe.data_source_for(pair)
-                check_tf = universe.class_config(universe.asset_class_for(pair)).check_timeframe
+                asset_class = universe.asset_class_for(pair)
+                if asset_class is None:
+                    raise KeyError(pair)  # handled by the legacy-signal fallback
+                check_tf = universe.class_config(asset_class).check_timeframe
             except KeyError:
                 # Symbol not in current universe (legacy signal) — default to ccxt/4h
                 data_source = "ccxt"
