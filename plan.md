@@ -1,8 +1,12 @@
 # The Tenth Floor AI — Project Plan
 
-> This file is the source of truth for what we are building, why, and in what order.
-> Read this before making any changes to the codebase.
-> Update this file as steps are completed and as the experiment produces data.
+> **Historical document.** This is the plan as written in early 2026, preserved
+> unedited below. The experiment ran for about a week in April 2026 and stopped;
+> the phases, decision gates, and null-hypothesis criteria were never reached.
+> It is kept because the pre-committed stopping rules are the part worth
+> reading. Figures here reflect the project as it stood when written — the
+> universe was later trimmed from 36 assets to the 20 in `config/universe.json`.
+> See [README.md](README.md#results) for what actually happened.
 
 ---
 

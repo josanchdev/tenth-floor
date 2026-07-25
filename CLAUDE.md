@@ -30,19 +30,19 @@ python -m tenth_floor.main                    # full universe
 python -m tenth_floor.main BTCUSDT ETHUSDT    # specific pairs
 python -m tenth_floor.main --dry-run          # no DB writes
 
-# Outcome checker (resolves PENDING/OPEN signals against real candles)
+# Outcome checker (resolves OPEN signals against real candles)
 python -m tenth_floor.check_outcomes
 python -m tenth_floor.check_outcomes --dry-run
 
 # CLI helpers (see ./run.sh --help)
 ./run.sh --local                              # headless local pipeline run
-./run.sh --outcomes-only                      # resolve PENDING/OPEN signals
+./run.sh --outcomes-only                      # resolve OPEN signals
 ./run.sh --reset-db                           # wipe + recreate signal DB from schema.sql
 ```
 
 ## Architecture
 
-**The Tenth Floor** is a personal multi-agent LLM research tool that produces daily swing-trade signals across a ~36-asset universe (crypto, US equities, ETFs, commodities). It runs locally with Qwen3-32B-AWQ on vLLM. The operator triggers runs from a React dashboard — there is no cron, no scheduler, no auto-publishing to external channels. See [plan.md](plan.md) for the 365-day experiment plan; [ROADMAP.md](ROADMAP.md) for the V4 architecture history.
+**The Tenth Floor** is a personal multi-agent LLM research tool that produces daily swing-trade signals across a 20-asset universe (crypto, US equities, ETFs, commodities). It runs locally with Qwen3-32B-AWQ on vLLM. The operator triggers runs from a React dashboard — there is no cron and no scheduler, though a run that publishes signals does post them to Discord and Notion when those env vars are configured. See [plan.md](plan.md) for the original 365-day experiment plan (historical — the experiment stopped in April 2026); [ROADMAP.md](ROADMAP.md) for the V4 architecture history.
 
 ### Pipeline Flow (Phase 1.5: AI-First)
 
@@ -51,13 +51,13 @@ Data (ccxt/yfinance) ──→ TACalculator ──→ Indicators + Structural Le
                                                     ↓
 MacroAnalyst (1 LLM call) ──→ macro frame (regime, per-class impact)
                                                     ↓
-Pre-screen (data-quality only, very permissive) ──→ ~30-36 candidates
+Pre-screen (data-quality only, very permissive) ──→ up to 20 candidates
                                                     ↓
 TradeAnalyst (1 LLM call per candidate) ──→ BUY proposals with entry/SL/TP/reasoning
                                                     ↓
 Python validation (sanity checks) ──→ valid proposals
                                                     ↓
-RiskReviewer (1 LLM call, ALL proposals) ──→ approved signals with conviction
+RiskReviewer (1 LLM call per proposal) ──→ approved signals with conviction
                                                     ↓
 Signal cap (business rule) ──→ featured signals ──→ SignalLogger (dashboard reads SQLite)
 ```
@@ -68,7 +68,7 @@ Signal cap (business rule) ──→ featured signals ──→ SignalLogger (da
 - **Spot only, LONG only.** No futures, no margin, no leverage.
 - **R:R >= 1.5 hard floor.** Business integrity rule — subscribers should never get a mathematically unfavorable trade. The LLM decides if a setup is good; Python confirms the math.
 - **1d timeframe only.** Daily candles across all asset classes.
-- **Max 3 featured signals per day** (production). Silence is the default.
+- **Signal cap per run** — 2 under `profiles/production.json`, 3 under `profiles/validation.json`, 5 from the base `risk_profile.json` default. Silence is the default.
 - **Duplicate-safe re-runs.** `UNIQUE(pair, timeframe, report_date)` + `INSERT OR IGNORE`.
 - **Symbol format:** `BTCUSDT` for crypto (no slash), standard tickers for equities (`AAPL`, `SPY`). Normalised once at data fetch. LLM symbol output is overridden with authoritative snapshot symbol.
 
@@ -90,7 +90,7 @@ All config in `config/`. No secrets — those go in `.env` (see `.env.example`).
 
 | File | Purpose |
 |------|---------|
-| `universe.json` | 36 assets across 4 classes + sector mapping |
+| `universe.json` | 20 assets across 4 classes + sector mapping |
 | `risk_profile.json` | Conviction tiers, SL/TP params, confidence threshold, max signals |
 | `models.yaml` | LLM provider routing + per-agent temp/token settings |
 | `services.yaml` | External service URLs and cache settings |
@@ -105,8 +105,9 @@ Path resolution: `config.py` walks up from CWD looking for `pyproject.toml`. Ove
 
 ### Signal Lifecycle
 
-`PENDING` → `OPEN` (price enters entry zone) → `HIT_TP` / `HIT_SL` / `EXPIRED` (14 days).
-Resolved by `check_outcomes.py` via 4h candle walk. SL wins on same-candle ambiguity (conservative). MAE/MFE tracked per signal.
+`OPEN` (fills immediately at the snapshot price) → `HIT_TP` / `HIT_SL` / `EXPIRED`.
+There is no PENDING tier and no entry zone — both were removed in `db/migrations/003_drop_entry_zone_and_pending.sql`.
+Expiry and check timeframe are per asset class (`config/universe.json`): crypto walks 4h candles and expires at 14 days, everything else walks 1d and expires at 10. SL wins on same-candle ambiguity (conservative). MAE/MFE tracked per signal.
 
 ### Compatibility Note
 
@@ -114,7 +115,9 @@ Resolved by `check_outcomes.py` via 4h candle walk. SL wins on same-candle ambig
 
 ## Project Status
 
-**V4 is the active plan** (approved 2026-03-30). Multi-asset universe + AI-first architecture. See [ROADMAP.md](ROADMAP.md) for the full plan.
+**The project is stopped.** It ran as a live forward test for roughly one week in April 2026 and was never resumed; the repo is public as a portfolio piece. See [README.md](README.md#results) for what the run produced (and why the sample is too small to conclude anything). Treat the phase notes below as a record of what was built, not a queue of work.
+
+**V4 was the active plan** (approved 2026-03-30). Multi-asset universe + AI-first architecture. See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 V3 is complete. V2 is complete.
 
@@ -122,7 +125,7 @@ V3 is complete. V2 is complete.
 
 **V4 Phase 1.5 (complete — 2026-04-07):** AI-first signal generation — MacroAnalyst (macro regime), TradeAnalyst (LLM picks entry/SL/TP), RiskReviewer (portfolio-level LLM reasoning), Python validation layer. Minimal prompts (role + output format only, no prescriptive rules). All V3 agents and mechanical gates deleted. Verified end-to-end with live market data. 176 tests pass.
 
-**V4 Phase 2 (next):** Signal quality — the only thing that matters until launch.
-- **2A: Infrastructure** — Docker Compose (5090 deployment), hardware profiles, per-proposal RiskReviewer (replace batch), TradeAnalyst prompt refinement, macro-aware ranking, model evaluation (Qwen 3.5).
+**V4 Phase 2 (partially delivered, then stopped):** Signal quality.
+- **2A: Infrastructure (delivered)** — Docker Compose (5090 deployment), hardware profiles, per-proposal RiskReviewer (replaced the batch call), TradeAnalyst prompt refinement, macro-aware ranking.
 - **2B: Context Enrichment** — RSS feeds (8 sources), 10Y yield via FRED, earnings calendar, asset-specific news injection. Requires 5090 token budget.
 - **2C: Equities-Specific** — Conditional entry zones, two-pass scheduling, market calendar in outcome checker.
